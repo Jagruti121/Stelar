@@ -1,0 +1,12 @@
+{
+  "name": "stellar-root",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build && npm --prefix functions run build",
+    "emulators": "firebase emulators:start --project stellar-ef848",
+    "seed": "npx tsx scripts/seed.ts",
+    "set-claims": "npx tsx scripts/set-claims.ts"
+  }
+}

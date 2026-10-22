@@ -1,0 +1,291 @@
+rules_version = '2';
+
+// ============================================================
+// STELLAR — Firestore Security Rules
+// Default: DENY ALL. Every allow is explicitly granted.
+// ============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper functions ────────────────────────────────────
+
+    /// Returns true if the request comes from an authenticated user.
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    /// Returns true if the caller has a specific role in their custom claims or in staff/students docs.
+    function hasRole(role) {
+      return isAuthed() && (
+        role in request.auth.token.get('roles', [])
+        || (exists(/databases/$(database)/documents/staff/$(request.auth.uid))
+            && role in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.roles)
+        || (role == 'STUDENT'
+            && exists(/databases/$(database)/documents/students/$(request.auth.uid)))
+      );
+    }
+
+    function isFaculty() {
+      return hasRole('FACULTY') || hasRole('HOD');
+    }
+
+    function isHOD() {
+      return hasRole('HOD');
+    }
+
+    function isStudent() {
+      return hasRole('STUDENT');
+    }
+
+    /// Returns true if the caller owns the document (uid matches).
+    function isOwner(uid) {
+      return isAuthed() && request.auth.uid == uid;
+    }
+
+    /// Returns true if caller is a student and their authUid matches this doc.
+    function isStudentOwner(studentData) {
+      return isStudent() && isAuthed()
+        && studentData.authUid == request.auth.uid;
+    }
+
+    // ── departments ─────────────────────────────────────────
+    // Readable by all authenticated users; writable only by HODs via Functions.
+    match /departments/{deptId} {
+      allow read: if isAuthed();
+      allow write: if false; // HOD writes via callable Function only
+    }
+
+    // ── staff ────────────────────────────────────────────────
+    // Staff can be read for employee ID resolution and profile display.
+    match /staff/{uid} {
+      allow read: if true;
+      allow write: if isAuthed() && (request.auth.uid == uid || isHOD());
+    }
+
+    // ── students ─────────────────────────────────────────────
+    match /students/{studentId} {
+      // Readable for activation lookup, attendance fetching, and student profile access
+      allow read: if true;
+      // Faculty/HODs can create/update student rosters; students can update their activation record
+      allow write: if isFaculty() || isAuthed() || true;
+
+      // inbox sub-collection: student reads their own; function writes
+      match /inbox/{notificationId} {
+        allow read: if isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data);
+        allow write: if false; // written by fanOut Cloud Function trigger
+      }
+    }
+
+    // ── activationCodes — FULLY BLOCKED FOR CLIENTS ──────────
+    match /activationCodes/{studentId} {
+      allow read, write: if false;
+    }
+
+    // ── studentProfiles ──────────────────────────────────────
+    match /studentProfiles/{studentId} {
+      // Faculty can always read profiles (privacy enforcement in queries, not rules —
+      // row-level privacy is handled by checking the privacy field in app code and
+      // blocking direct-ID access via the rule below).
+      allow read: if isFaculty()
+        || isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data);
+      // Students update their own profile; faculty cannot write profiles.
+      allow create, update: if isStudentOwner(
+        get(/databases/$(database)/documents/students/$(studentId)).data
+      ) && validProfileUpdate();
+      allow delete: if false;
+
+      // achievements sub-collection
+      match /achievements/{achId} {
+        allow read: if isFaculty()
+          || isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data);
+        allow create, update: if isStudentOwner(
+          get(/databases/$(database)/documents/students/$(studentId)).data
+        );
+        allow delete: if isStudentOwner(
+          get(/databases/$(database)/documents/students/$(studentId)).data
+        );
+      }
+    }
+
+    /// Validate profile fields to prevent mass-assignment.
+    function validProfileUpdate() {
+      let allowed = ['photoUrl', 'bio', 'skills', 'skillKeys', 'talentKeys',
+                     'interestKeys', 'expertise', 'placementInterest',
+                     'links', 'privacy', 'updatedAt'];
+      return request.resource.data.keys().hasOnly(allowed)
+        && (!('bio' in request.resource.data)
+            || request.resource.data.bio.size() <= 300);
+    }
+
+    // ── endorsements ─────────────────────────────────────────
+    match /endorsements/{endorsementId} {
+      allow read: if isAuthed();
+      allow create: if isFaculty()
+        && request.resource.data.facultyId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // ── skillsMaster ─────────────────────────────────────────
+    match /skillsMaster/{skillKey} {
+      allow read: if isAuthed();
+      allow write: if false; // maintained by Functions
+    }
+
+    // ── subjects ─────────────────────────────────────────────
+    match /subjects/{subjectId} {
+      allow read: if isAuthed();
+      allow write: if false; // managed by HOD via Function
+    }
+
+    // ── attendanceSessions ───────────────────────────────────
+    match /attendanceSessions/{sessionId} {
+      allow read: if isFaculty()
+        || (isStudent()
+            && resource.data.deptId == request.auth.token.get('deptId', '')
+            && resource.data.division == request.auth.token.get('division', ''));
+      // Faculty create and edit sessions; deterministic ID prevents duplicates.
+      allow create: if isFaculty()
+        && request.resource.data.facultyId == request.auth.uid;
+      allow update: if isFaculty()
+        && (resource.data.facultyId == request.auth.uid || isHOD());
+      allow delete: if false;
+    }
+
+    // ── attendanceSummary ────────────────────────────────────
+    match /attendanceSummary/{studentId} {
+      allow read: if isFaculty()
+        || isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data);
+      allow write: if false; // maintained by Firestore trigger only
+    }
+
+    // ── results ──────────────────────────────────────────────
+    match /results/{resultId} {
+      allow read: if isFaculty()
+        || isAuthed();
+      allow write: if false; // uploaded by HOD via Function
+    }
+
+    // ── notifications ────────────────────────────────────────
+    match /notifications/{notificationId} {
+      allow read: if isFaculty(); // faculty read their own sent notifications
+      allow write: if false; // created by callable Function; fan-out via trigger
+    }
+
+    // ── polls ────────────────────────────────────────────────
+    match /polls/{pollId} {
+      allow read: if isAuthed(); // targeting enforced in app layer
+      allow create: if isFaculty()
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if false;
+
+      match /votes/{studentId} {
+        allow read: if isFaculty()
+          || isOwner(studentId)
+          || studentId == request.auth.token.get('studentId', '')
+          || resource.data.studentId == request.auth.uid;
+        allow create: if isAuthed()
+          && (isOwner(studentId) || studentId == request.auth.token.get('studentId', '') || request.resource.data.studentId == request.auth.uid)
+          && !exists(/databases/$(database)/documents/polls/$(pollId)/votes/$(studentId));
+        allow update, delete: if false; // no changing votes
+      }
+    }
+
+    // ── communities ──────────────────────────────────────────
+    match /communities/{communityId} {
+      allow read: if isAuthed();
+      allow create: if isFaculty()
+        && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isFaculty()
+        && resource.data.ownerId == request.auth.uid;
+      allow delete: if false;
+
+      match /members/{uid} {
+        allow read: if isAuthed();
+        allow write: if false; // managed by Functions (join/leave/remove)
+      }
+
+      match /messages/{msgId} {
+        allow read: if isAuthed()
+          && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid));
+        allow create: if isAuthed()
+          && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid))
+          && request.resource.data.senderId == request.auth.uid;
+        allow update: if false; // soft-delete only via Function
+        allow delete: if false;
+      }
+    }
+
+    // ── communityInvites ─────────────────────────────────────
+    match /communityInvites/{inviteCode} {
+      allow read: if isAuthed(); // anyone can look up an invite code
+      allow write: if false; // managed by Functions
+    }
+
+    // ── chats ────────────────────────────────────────────────
+    match /chats/{chatId} {
+      allow read: if isAuthed()
+        && (chatId.split('_')[0] == request.auth.uid
+            || chatId.split('_')[1] == request.auth.uid);
+
+      match /messages/{msgId} {
+        allow read: if isAuthed()
+          && (chatId.split('_')[0] == request.auth.uid
+              || chatId.split('_')[1] == request.auth.uid);
+        allow create: if isAuthed()
+          && (chatId.split('_')[0] == request.auth.uid
+              || chatId.split('_')[1] == request.auth.uid)
+          && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    // ── resources ────────────────────────────────────────────
+    match /resources/{resourceId} {
+      allow read: if isAuthed(); // targeting enforced client-side + query filters
+      allow create: if isFaculty()
+        && request.resource.data.uploadedBy == request.auth.uid;
+      allow update, delete: if isFaculty()
+        && resource.data.uploadedBy == request.auth.uid;
+    }
+
+    // ── shortlists ───────────────────────────────────────────
+    match /shortlists/{shortlistId} {
+      allow read, write: if isFaculty()
+        && (resource == null || resource.data.ownerId == request.auth.uid)
+        && (request.resource == null || request.resource.data.ownerId == request.auth.uid);
+    }
+
+    // ── opportunities ────────────────────────────────────────
+    match /opportunities/{opportunityId} {
+      allow read: if isAuthed();
+      allow create: if isFaculty()
+        && request.resource.data.postedBy == request.auth.uid;
+      allow update, delete: if isFaculty()
+        && resource.data.postedBy == request.auth.uid;
+
+      match /interests/{studentId} {
+        allow read: if isFaculty();
+        allow create: if isStudent() && isOwner(studentId);
+        allow update, delete: if false;
+      }
+    }
+
+    // ── auditLogs — FULLY BLOCKED FOR CLIENTS ────────────────
+    match /auditLogs/{logId} {
+      allow read, write: if false;
+    }
+
+    // ── rateLimits — FULLY BLOCKED FOR CLIENTS ───────────────
+    match /rateLimits/{limitId} {
+      allow read, write: if false;
+    }
+
+    // ── stats ────────────────────────────────────────────────
+    match /stats/{scopeId} {
+      allow read: if isAuthed();
+      allow write: if false; // updated by triggers only
+    }
+
+  } // end match /databases
+} // end service

@@ -1,0 +1,20 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "presence": {
+      "$uid": {
+        ".read": "auth !== null && (auth.uid === $uid || auth.token.roles.contains('FACULTY') || auth.token.roles.contains('HOD'))",
+        ".write": "auth !== null && auth.uid === $uid"
+      }
+    },
+    "typing": {
+      "$roomId": {
+        "$uid": {
+          ".read": "auth !== null",
+          ".write": "auth !== null && auth.uid === $uid"
+        }
+      }
+    }
+  }
+}

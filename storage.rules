@@ -1,0 +1,115 @@
+rules_version = '2';
+
+// ============================================================
+// STELLAR — Cloud Storage Security Rules
+// Default: DENY ALL.
+// ============================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── Helper functions ─────────────────────────────────────
+
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return isAuthed() && role in request.auth.token.get('roles', []);
+    }
+
+    function isFaculty() {
+      return hasRole('FACULTY') || hasRole('HOD');
+    }
+
+    function isStudent() {
+      return hasRole('STUDENT');
+    }
+
+    /// Max file size: 10 MB
+    function isUnder10MB() {
+      return request.resource.size <= 10 * 1024 * 1024;
+    }
+
+    /// Allowed image types
+    function isImage() {
+      return request.resource.contentType.matches('image/(jpeg|png|webp|gif)');
+    }
+
+    /// Allowed document types
+    function isDocument() {
+      return request.resource.contentType.matches(
+        'application/(pdf|vnd\\.openxmlformats.*|vnd\\.ms-.*|msword)'
+      ) || request.resource.contentType.matches('text/plain');
+    }
+
+    // ── Profile photos ───────────────────────────────────────
+    // Path: profilePhotos/{studentId}/{filename}
+    match /profilePhotos/{studentId}/{filename} {
+      allow read: if isAuthed();
+      allow write: if isStudent()
+        && request.auth.token.get('studentId', '') == studentId
+        && isImage()
+        && isUnder10MB();
+      allow delete: if isStudent()
+        && request.auth.token.get('studentId', '') == studentId;
+    }
+
+    // ── Achievement certificates ─────────────────────────────
+    // Path: certificates/{studentId}/{filename}
+    match /certificates/{studentId}/{filename} {
+      allow read: if isAuthed();
+      allow write: if isStudent()
+        && request.auth.token.get('studentId', '') == studentId
+        && (isImage() || isDocument())
+        && isUnder10MB();
+      allow delete: if isStudent()
+        && request.auth.token.get('studentId', '') == studentId;
+    }
+
+    // ── Study resources ──────────────────────────────────────
+    // Path: resources/{resourceId}/{filename}
+    match /resources/{resourceId}/{filename} {
+      allow read: if isAuthed();
+      allow write: if isFaculty()
+        && (isDocument() || isImage())
+        && isUnder10MB();
+      allow delete: if isFaculty();
+    }
+
+    // ── Notification attachments ─────────────────────────────
+    // Path: notifications/{notificationId}/{filename}
+    match /notifications/{notificationId}/{filename} {
+      allow read: if isAuthed();
+      allow write: if isFaculty()
+        && (isDocument() || isImage())
+        && isUnder10MB();
+      allow delete: if isFaculty();
+    }
+
+    // ── Community icons ──────────────────────────────────────
+    // Path: communityIcons/{communityId}/{filename}
+    match /communityIcons/{communityId}/{filename} {
+      allow read: if isAuthed();
+      allow write: if isFaculty()
+        && isImage()
+        && isUnder10MB();
+      allow delete: if isFaculty();
+    }
+
+    // ── Community message files ──────────────────────────────
+    // Path: chatFiles/{roomId}/{filename}
+    match /chatFiles/{roomId}/{filename} {
+      allow read: if isAuthed();
+      allow write: if isAuthed()
+        && (isDocument() || isImage())
+        && isUnder10MB();
+      allow delete: if false;
+    }
+
+    // ── Catch-all deny ───────────────────────────────────────
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
