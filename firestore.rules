@@ -266,7 +266,17 @@ service cloud.firestore {
       let cDept = c.get('department', '');
       let cDiv = c.get('division', '');
       let cYr = c.get('year', '');
-      return (cDept == 'ALL' || cDept == sDept || (cDept == 'CS' && (sDept in ['cse', 'cs', 'CS', 'Computer Science', 'computer science'])) || (cDept == 'IT' && (sDept in ['it', 'IT', 'Information Technology'])))
+      let deptOk = cDept == 'ALL'
+        || cDept == sDept
+        // classroom stored as old abbreviated name
+        || (cDept == 'CS' && (sDept in ['cse', 'cs', 'CS', 'Computer Science', 'computer science']))
+        || (cDept == 'IT' && (sDept in ['it', 'IT', 'Information Technology', 'information technology']))
+        // classroom stored as canonical full name (new format)
+        || (cDept == 'Computer Science' && (sDept in ['cs', 'CS', 'cse', 'CSE', 'Computer Science', 'computer science', 'compsci']))
+        || (cDept == 'Information Technology' && (sDept in ['it', 'IT', 'Information Technology', 'information technology', 'infotech']))
+        || (cDept == 'Data Science' && (sDept in ['ds', 'DS', 'Data Science', 'data science', 'datasci']))
+        || (cDept == 'Engineering' && (sDept in ['eng', 'ENG', 'Engineering', 'engineering']));
+      return deptOk
           && (cDiv == 'ALL' || cDiv == sDiv)
           && (cYr == 'ALL' || cYr == sYr || (cYr == 'First Year' && (sYr in ['First', '1', 'First Year'])) || (cYr == 'Second Year' && (sYr in ['Second', '2', 'Second Year'])) || (cYr == 'Third Year' && (sYr in ['Third', '3', 'Third Year'])));
     }
@@ -282,8 +292,14 @@ service cloud.firestore {
       let cYr = c.get('year', '');
 
       let deptOk = cDept == 'ALL' || cDept == dept
+        // classroom stored as old abbreviated name
         || (cDept == 'CS' && (dept in ['cse', 'cs', 'CS', 'computer science', 'Computer Science']))
-        || (cDept == 'IT' && (dept in ['it', 'IT']));
+        || (cDept == 'IT' && (dept in ['it', 'IT', 'information technology', 'Information Technology']))
+        // classroom stored as canonical full name (new format)
+        || (cDept == 'Computer Science' && (dept in ['cs', 'CS', 'cse', 'CSE', 'Computer Science', 'computer science', 'compsci']))
+        || (cDept == 'Information Technology' && (dept in ['it', 'IT', 'Information Technology', 'information technology', 'infotech']))
+        || (cDept == 'Data Science' && (dept in ['ds', 'DS', 'Data Science', 'data science', 'datasci']))
+        || (cDept == 'Engineering' && (dept in ['eng', 'ENG', 'Engineering', 'engineering']));
 
       let divOk = cDiv == 'ALL' || cDiv == div;
 
