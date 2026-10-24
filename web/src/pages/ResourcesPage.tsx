@@ -44,7 +44,7 @@ interface FileNode {
   uploadedAt: any;
 }
 
-const DEPT_OPTIONS = ['CS', 'IT', 'Engineering', 'Other'];
+const DEPT_OPTIONS = ['Computer Science', 'Information Technology', 'Engineering', 'Other'];
 const YEAR_OPTIONS = ['First Year', 'Second Year', 'Third Year'];
 const DIVISION_OPTIONS = ['A', 'B', 'C', 'D'];
 
@@ -73,8 +73,18 @@ function StudentResourcesPage({ claims }: { claims: any }) {
 
     async function loadMatchingClassrooms() {
       try {
-        const rawDept = (claims?.deptId || claims?.department || 'CS').toUpperCase();
-        const studentDept = rawDept === 'CSE' ? 'CS' : rawDept;
+        // Normalize department to canonical name (matches what faculty saves)
+        const normalizeDept = (raw: string): string => {
+          const s = (raw || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (['cs', 'cse', 'computerscience', 'compsci'].includes(s)) return 'Computer Science';
+          if (['it', 'informationtechnology', 'infotech'].includes(s)) return 'Information Technology';
+          if (['ds', 'datascience', 'datasci'].includes(s)) return 'Data Science';
+          if (['eng', 'engineering'].includes(s)) return 'Engineering';
+          return 'Other';
+        };
+
+        const rawDept = claims?.deptId || claims?.department || '';
+        const studentDept = normalizeDept(rawDept);
         const studentDiv = (claims?.division || 'A').toUpperCase();
         let studentYear = claims?.year || 'First Year';
         if (studentYear === 'First') studentYear = 'First Year';
@@ -179,7 +189,7 @@ function FacultyResourcesPage() {
 
   // Create classroom form
   const [formClassname, setFormClassname] = useState('');
-  const [formDept, setFormDept] = useState('CS');
+  const [formDept, setFormDept] = useState('Computer Science');
   const [formYear, setFormYear] = useState('First Year');
   const [formSubject, setFormSubject] = useState('');
   const [formDivision, setFormDivision] = useState('A');
@@ -221,7 +231,7 @@ function FacultyResourcesPage() {
       setShowCreateModal(false);
       setAddMode(null);
       setConsentChecked(false);
-      setFormClassname(''); setFormDept('CS'); setFormYear('First Year');
+      setFormClassname(''); setFormDept('Computer Science'); setFormYear('First Year');
       setFormSubject(''); setFormDivision('A');
     } catch (e) {
       console.error(e);

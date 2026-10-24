@@ -35,6 +35,7 @@ import {
   arrayUnion,
   increment,
   arrayRemove,
+  runTransaction,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast } from 'sonner';
@@ -923,6 +924,7 @@ function CommunityChatView({
   const [messages, setMessages] = useState<ExtMessage[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [votingOptId, setVotingOptId] = useState<string | null>(null); // tracks which poll option is being voted
   const [composeMode, setComposeMode] = useState<ComposeMode>('text');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [activeEmojiGroup, setActiveEmojiGroup] = useState(0);
@@ -1035,17 +1037,41 @@ function CommunityChatView({
     }
   };
 
-  // Vote on poll
-  const handlePollVote = async (msgId: string, optId: string, currentOpts: { id: string; text: string; votes: string[] }[]) => {
-    const updatedOpts = currentOpts.map(opt => {
-      const alreadyVoted = opt.votes.includes(currentUserUid);
-      if (opt.id === optId) {
-        return { ...opt, votes: alreadyVoted ? opt.votes.filter(v => v !== currentUserUid) : [...opt.votes, currentUserUid] };
-      }
-      // Remove vote from other options (single-vote poll)
-      return { ...opt, votes: opt.votes.filter(v => v !== currentUserUid) };
-    });
-    await updateDoc(doc(db, 'communities', community.id, 'messages', msgId), { pollOptions: updatedOpts });
+  // Vote on poll — uses a Firestore transaction to avoid race conditions
+  const handlePollVote = async (msgId: string, optId: string) => {
+    if (votingOptId) return; // prevent double-click
+    setVotingOptId(optId);
+    try {
+      const msgRef = doc(db, 'communities', community.id, 'messages', msgId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(msgRef);
+        if (!snap.exists()) throw new Error('Message not found');
+        const data = snap.data() as any;
+        const opts: { id: string; text: string; votes: string[] }[] = data.pollOptions || [];
+
+        const updatedOpts = opts.map(opt => {
+          const alreadyVoted = opt.votes.includes(currentUserUid);
+          if (opt.id === optId) {
+            // Toggle: remove if already voted, add if not
+            return {
+              ...opt,
+              votes: alreadyVoted
+                ? opt.votes.filter(v => v !== currentUserUid)
+                : [...opt.votes, currentUserUid],
+            };
+          }
+          // Single-vote: remove from all other options
+          return { ...opt, votes: opt.votes.filter(v => v !== currentUserUid) };
+        });
+
+        tx.update(msgRef, { pollOptions: updatedOpts });
+      });
+    } catch (err: any) {
+      console.error('Vote error:', err);
+      toast.error('Failed to record vote. Please try again.');
+    } finally {
+      setVotingOptId(null);
+    }
   };
 
   // React to message
@@ -1161,10 +1187,12 @@ function CommunityChatView({
                           return (
                             <button
                               key={opt.id}
-                              onClick={() => handlePollVote(msg.id, opt.id, (msg as any).pollOptions)}
+                              onClick={() => handlePollVote(msg.id, opt.id)}
+                              disabled={votingOptId !== null}
                               className={cn(
                                 'w-full text-left rounded-lg overflow-hidden border transition-all relative',
                                 voted ? 'border-indigo-400' : 'border-slate-200',
+                                votingOptId === opt.id ? 'opacity-60 cursor-wait' : 'cursor-pointer',
                                 'bg-white/10'
                               )}
                             >
