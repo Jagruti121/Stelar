@@ -6,14 +6,18 @@ import { FieldValue } from 'firebase-admin/firestore';
 const NotificationTargetSchema = z.object({
   type: z.enum(['all', 'dept', 'division', 'students']),
   deptIds: z.array(z.string()).optional(),
+  department: z.string().optional(),
   divisions: z.array(z.string()).optional(),
   studentIds: z.array(z.string()).optional(),
+  year: z.string().optional(),
 });
 
 const SendNotificationSchema = z.object({
   title: z.string().min(1),
   message: z.string().min(1),
-  target: NotificationTargetSchema
+  target: NotificationTargetSchema,
+  priority: z.string().optional(),
+  department: z.string().optional(),
 });
 
 export const sendNotification = onCall({ region: 'us-central1' }, async (request) => {
@@ -41,11 +45,16 @@ export const sendNotification = onCall({ region: 'us-central1' }, async (request
   }
 
   const docRef = db.collection('notifications').doc();
+  const priority = data.priority || 'casual';
+  const department = data.department || (data.target?.department ? data.target.department : (data.target?.type === 'all' ? 'All' : undefined));
+
   await docRef.set({
     id: docRef.id,
     title: data.title,
     message: data.message,
     target: data.target,
+    priority: priority,
+    ...(department ? { department } : {}),
     createdBy: request.auth.uid,
     createdAt: FieldValue.serverTimestamp()
   });

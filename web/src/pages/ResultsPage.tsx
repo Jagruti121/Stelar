@@ -13,6 +13,7 @@ export default function ResultsPage(): React.ReactElement {
   const [studentInfo, setStudentInfo] = useState<{ name?: string; rollNo?: string; department?: string; year?: string } | null>(null);
   const [rollInput, setRollInput] = useState<string>('');
   const [activeRoll, setActiveRoll] = useState<string>('');
+  // FIX 2: Track selected semester independently — never force-override it
   const [semester, setSemester] = useState<number>(1);
   const [availableSemesters, setAvailableSemesters] = useState<number[]>([]);
   const [result, setResult] = useState<Result | null>(null);
@@ -93,12 +94,17 @@ export default function ResultsPage(): React.ReactElement {
     };
   }, [user?.uid, claims, isFaculty]);
 
-  // 2. Fetch available semesters and result whenever activeRoll or semester changes
+  // 2. Fetch available semesters whenever activeRoll changes.
+  //    Also fetch the result for the currently selected semester.
+  //    FIX 2: Never auto-redirect to a different semester.
+  //    FIX 1: When activeRoll changes (new lookup), also resolve student name/info.
   useEffect(() => {
     if (!activeRoll) return;
 
     let isMounted = true;
     setSearching(true);
+    // FIX 1: Clear previous student info when performing a new roll lookup
+    setStudentInfo(null);
 
     async function loadResults() {
       const rollClean = activeRoll.trim();
@@ -109,6 +115,43 @@ export default function ResultsPage(): React.ReactElement {
         `student_${rollClean.toUpperCase()}`,
         `student_${rollClean.toLowerCase()}`
       ];
+
+      // FIX 1: Resolve the student name for the new activeRoll from Firestore
+      try {
+        // Try querying by rollNo field
+        const q = query(collection(db, 'students'), where('rollNo', '==', rollClean));
+        const snap = await getDocs(q);
+        if (!snap.empty && isMounted) {
+          const data = snap.docs[0].data();
+          setStudentInfo({
+            name: data.name || undefined,
+            rollNo: data.rollNo || rollClean,
+            department: data.department || data.deptId || undefined,
+            year: data.year ? `${data.year} Year` : undefined,
+          });
+        } else {
+          // Try document ID lookup (student_<rollNo>)
+          for (const cand of candidates) {
+            try {
+              const sSnap = await getDoc(doc(db, 'students', cand));
+              if (sSnap.exists() && isMounted) {
+                const data = sSnap.data();
+                setStudentInfo({
+                  name: data.name || undefined,
+                  rollNo: data.rollNo || rollClean,
+                  department: data.department || data.deptId || undefined,
+                  year: data.year ? `${data.year} Year` : undefined,
+                });
+                break;
+              }
+            } catch {
+              // ignore individual doc misses
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Roll lookup for student name failed:', e);
+      }
 
       // Check all available semesters
       const foundSemesters = new Set<number>();
@@ -134,24 +177,7 @@ export default function ResultsPage(): React.ReactElement {
         const sortedSems = Array.from(foundSemesters).sort((a, b) => a - b);
         setAvailableSemesters(sortedSems);
 
-        // If the current semester has no results, but other semesters do, auto-select the latest
-        if (!matchedResult && sortedSems.length > 0 && !foundSemesters.has(semester)) {
-          const latestSem = sortedSems[sortedSems.length - 1];
-          setSemester(latestSem);
-          // fetch for that semester
-          for (const cand of candidates) {
-            try {
-              const rSnap = await getDoc(doc(db, 'results', `${cand}_${latestSem}`));
-              if (rSnap.exists()) {
-                matchedResult = rSnap.data() as Result;
-                break;
-              }
-            } catch {
-              // ignore
-            }
-          }
-        }
-
+        // FIX 2: Do NOT auto-switch semester. Just set result (null if unpublished).
         setResult(matchedResult);
         setSearching(false);
       }
@@ -162,11 +188,56 @@ export default function ResultsPage(): React.ReactElement {
     return () => {
       isMounted = false;
     };
-  }, [activeRoll, semester]);
+  }, [activeRoll]); // intentionally NOT including `semester` — semester change is handled separately
+
+  // 3. When ONLY the semester changes (user picks from dropdown or pills),
+  //    fetch just the result for that semester without re-resolving the student.
+  useEffect(() => {
+    if (!activeRoll || searching) return;
+
+    let isMounted = true;
+
+    async function fetchForSemester() {
+      const rollClean = activeRoll.trim();
+      const candidates = [
+        rollClean,
+        rollClean.toLowerCase(),
+        rollClean.toUpperCase(),
+        `student_${rollClean.toUpperCase()}`,
+        `student_${rollClean.toLowerCase()}`
+      ];
+
+      let matchedResult: Result | null = null;
+      for (const cand of candidates) {
+        try {
+          const rSnap = await getDoc(doc(db, 'results', `${cand}_${semester}`));
+          if (rSnap.exists()) {
+            matchedResult = rSnap.data() as Result;
+            break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (isMounted) {
+        // FIX 2: Just update result — null means "No result published yet"
+        setResult(matchedResult);
+      }
+    }
+
+    fetchForSemester();
+
+    return () => {
+      isMounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [semester]);
 
   const handleSearchRoll = (e: React.FormEvent) => {
     e.preventDefault();
     if (rollInput.trim()) {
+      // FIX 1: Changing activeRoll triggers the main useEffect which re-resolves student name
       setActiveRoll(rollInput.trim());
     }
   };
@@ -187,7 +258,7 @@ export default function ResultsPage(): React.ReactElement {
           </p>
         </div>
 
-        {/* Semester Selector */}
+        {/* Semester Selector — FIX 2: onChange only sets semester state, never redirects */}
         <div className="flex items-center gap-2">
           <label className="text-xs font-semibold text-[--text-muted]">Semester:</label>
           <select 
@@ -213,6 +284,7 @@ export default function ResultsPage(): React.ReactElement {
             </div>
             <div>
               <div className="flex items-center gap-2">
+                {/* FIX 1: studentInfo is cleared and re-fetched when activeRoll changes */}
                 <h3 className="font-bold text-lg text-[--text]">
                   {studentInfo?.name || `Student (${activeRoll.toUpperCase()})`}
                 </h3>
@@ -277,12 +349,14 @@ export default function ResultsPage(): React.ReactElement {
           <p className="text-xs text-[--text-muted] font-medium">Fetching academic records...</p>
         </div>
       ) : !result ? (
+        // FIX 2: Render a clear "not published" fallback — no redirect
         <div className="card text-center p-12 border-dashed border-2 border-gray-200">
           <AlertCircle className="h-10 w-10 text-amber-500 mx-auto mb-3" />
-          <h3 className="font-semibold text-lg text-gray-800">No Results Found</h3>
+          <h3 className="font-semibold text-lg text-gray-800">No result published yet</h3>
           <p className="text-sm text-[--text-muted] mt-1 max-w-md mx-auto">
             No academic marks have been published for Roll Number{' '}
-            <span className="font-bold text-[--text]">{activeRoll.toUpperCase()}</span> in Semester {semester}.
+            <span className="font-bold text-[--text]">{activeRoll.toUpperCase()}</span>{' '}
+            in Semester {semester}.
           </p>
           {availableSemesters.length > 0 && (
             <p className="text-xs text-blue-600 mt-3 font-medium">
@@ -338,7 +412,7 @@ export default function ResultsPage(): React.ReactElement {
           {/* Subject-wise Marks Table */}
           <div className="card p-0 overflow-hidden shadow-sm border border-gray-200">
             <div className="p-4 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="font-bold text-gray-800 text-sm">Subject Breakdown & Grades</h3>
+              <h3 className="font-bold text-gray-800 text-sm">Subject Breakdown &amp; Grades</h3>
               <span className="text-xs text-[--text-muted]">Semester {semester}</span>
             </div>
             <div className="overflow-x-auto">

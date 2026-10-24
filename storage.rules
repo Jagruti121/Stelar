@@ -67,6 +67,14 @@ service firebase.storage {
         && request.auth.token.get('studentId', '') == studentId;
     }
 
+    // ── Classroom materials ──────────────────────────────────
+    // Path: classrooms/{classroomId}/{allPaths=**}
+    match /classrooms/{classroomId}/{allPaths=**} {
+      allow read: if isAuthed();
+      allow write: if isFaculty() && isUnder10MB();
+      allow delete: if isFaculty();
+    }
+
     // ── Study resources ──────────────────────────────────────
     // Path: resources/{resourceId}/{filename}
     match /resources/{resourceId}/{filename} {
@@ -105,6 +113,15 @@ service firebase.storage {
         && (isDocument() || isImage())
         && isUnder10MB();
       allow delete: if false;
+    }
+
+    // ── Resumes / CVs for Opportunity Applications ────────────
+    match /resumes/{allPaths=**} {
+      allow read: if isAuthed();
+      allow write: if isAuthed()
+        && (isDocument() || isImage())
+        && isUnder10MB();
+      allow delete: if isAuthed();
     }
 
     // ── Catch-all deny ───────────────────────────────────────

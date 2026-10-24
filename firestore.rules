@@ -19,6 +19,7 @@ service cloud.firestore {
     function hasRole(role) {
       return isAuthed() && (
         role in request.auth.token.get('roles', [])
+        || request.auth.token.get('role', '') == role
         || (exists(/databases/$(database)/documents/staff/$(request.auth.uid))
             && role in get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.roles)
         || (role == 'STUDENT'
@@ -112,10 +113,9 @@ service cloud.firestore {
     function validProfileUpdate() {
       let allowed = ['photoUrl', 'bio', 'skills', 'skillKeys', 'talentKeys',
                      'interestKeys', 'expertise', 'placementInterest',
-                     'links', 'privacy', 'updatedAt'];
-      return request.resource.data.keys().hasOnly(allowed)
-        && (!('bio' in request.resource.data)
-            || request.resource.data.bio.size() <= 300);
+                     'links', 'privacy', 'updatedAt',
+                     'name', 'fullName', 'phone', 'address', 'experience'];
+      return request.resource.data.keys().hasOnly(allowed);
     }
 
     // ── endorsements ─────────────────────────────────────────
@@ -168,8 +168,8 @@ service cloud.firestore {
 
     // ── notifications ────────────────────────────────────────
     match /notifications/{notificationId} {
-      allow read: if isFaculty(); // faculty read their own sent notifications
-      allow write: if false; // created by callable Function; fan-out via trigger
+      allow read: if isFaculty() || isAuthed();
+      allow create, write: if isFaculty();
     }
 
     // ── polls ────────────────────────────────────────────────
@@ -195,23 +195,41 @@ service cloud.firestore {
     match /communities/{communityId} {
       allow read: if isAuthed();
       allow create: if isFaculty()
-        && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isFaculty()
-        && resource.data.ownerId == request.auth.uid;
+        && (request.resource.data.ownerId == request.auth.uid || request.resource.data.get('createdBy', '') == request.auth.uid);
+      allow update: if (isFaculty() && (resource.data.ownerId == request.auth.uid || isHOD()))
+        || (
+          isAuthed()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberCount', 'updatedAt'])
+          && request.resource.data.members.hasAny([request.auth.uid])
+        );
       allow delete: if false;
 
       match /members/{uid} {
         allow read: if isAuthed();
-        allow write: if false; // managed by Functions (join/leave/remove)
+        allow create, write: if isAuthed() && (uid == request.auth.uid || isFaculty());
+        allow delete: if isFaculty();
       }
 
       match /messages/{msgId} {
         allow read: if isAuthed()
-          && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid));
+          && (
+            exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid))
+            || get(/databases/$(database)/documents/communities/$(communityId)).data.get('members', []).hasAny([request.auth.uid])
+            || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid
+          );
         allow create: if isAuthed()
-          && exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid))
-          && request.resource.data.senderId == request.auth.uid;
-        allow update: if false; // soft-delete only via Function
+          && (
+            exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid))
+            || get(/databases/$(database)/documents/communities/$(communityId)).data.get('members', []).hasAny([request.auth.uid])
+            || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid
+          )
+          && request.resource.data.senderId == request.auth.uid
+          && (
+            // If one-side chat (broadcast), only admin/owner can post messages!
+            get(/databases/$(database)/documents/communities/$(communityId)).data.get('chatPermission', 'both-side') != 'one-side'
+            || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid
+          );
+        allow update: if false;
         allow delete: if false;
       }
     }
@@ -240,6 +258,65 @@ service cloud.firestore {
       }
     }
 
+    /// Checks if a student document matches the classroom target.
+    function studentDocMatches(c, s) {
+      let sDept = s.get('department', s.get('deptId', ''));
+      let sDiv = s.get('division', '');
+      let sYr = s.get('year', '');
+      let cDept = c.get('department', '');
+      let cDiv = c.get('division', '');
+      let cYr = c.get('year', '');
+      return (cDept == 'ALL' || cDept == sDept || (cDept == 'CS' && (sDept in ['cse', 'cs', 'CS', 'Computer Science', 'computer science'])) || (cDept == 'IT' && (sDept in ['it', 'IT', 'Information Technology'])))
+          && (cDiv == 'ALL' || cDiv == sDiv)
+          && (cYr == 'ALL' || cYr == sYr || (cYr == 'First Year' && (sYr in ['First', '1', 'First Year'])) || (cYr == 'Second Year' && (sYr in ['Second', '2', 'Second Year'])) || (cYr == 'Third Year' && (sYr in ['Third', '3', 'Third Year'])));
+    }
+
+    /// Checks if a student's profile data (claims or students document) matches the classroom target.
+    function studentMatchesClassroom(c) {
+      let dept = request.auth.token.get('deptId', request.auth.token.get('department', ''));
+      let div = request.auth.token.get('division', '');
+      let yr = request.auth.token.get('year', '');
+
+      let cDept = c.get('department', '');
+      let cDiv = c.get('division', '');
+      let cYr = c.get('year', '');
+
+      let deptOk = cDept == 'ALL' || cDept == dept
+        || (cDept == 'CS' && (dept in ['cse', 'cs', 'CS', 'computer science', 'Computer Science']))
+        || (cDept == 'IT' && (dept in ['it', 'IT']));
+
+      let divOk = cDiv == 'ALL' || cDiv == div;
+
+      let yrOk = cYr == 'ALL' || cYr == yr
+        || (cYr == 'First Year' && (yr in ['First', '1', 'First Year', '']))
+        || (cYr == 'Second Year' && (yr in ['Second', '2', 'Second Year']))
+        || (cYr == 'Third Year' && (yr in ['Third', '3', 'Third Year']));
+
+      return (deptOk && divOk && yrOk)
+        || (exists(/databases/$(database)/documents/students/$(request.auth.uid))
+            && studentDocMatches(c, get(/databases/$(database)/documents/students/$(request.auth.uid)).data));
+    }
+
+    // ── classrooms ───────────────────────────────────────────
+    match /classrooms/{classroomId} {
+      allow read: if isFaculty()
+        || (isStudent() && studentMatchesClassroom(resource.data));
+      allow create, write: if isAuthed() && isFaculty()
+        && (request.resource == null || request.resource.data.createdBy == request.auth.uid);
+    }
+
+    // ── classroomFolders ─────────────────────────────────────
+    match /classroomFolders/{folderId} {
+      allow read: if isAuthed();
+      allow create, write: if isFaculty();
+    }
+
+    // ── classroomFiles ───────────────────────────────────────
+    match /classroomFiles/{fileId} {
+      allow read: if isAuthed();
+      allow create, write: if isFaculty();
+    }
+
     // ── resources ────────────────────────────────────────────
     match /resources/{resourceId} {
       allow read: if isAuthed(); // targeting enforced client-side + query filters
@@ -260,13 +337,21 @@ service cloud.firestore {
     match /opportunities/{opportunityId} {
       allow read: if isAuthed();
       allow create: if isFaculty()
-        && request.resource.data.postedBy == request.auth.uid;
+        && (request.resource.data.postedBy == request.auth.uid || request.resource.data.createdBy == request.auth.uid);
       allow update, delete: if isFaculty()
-        && resource.data.postedBy == request.auth.uid;
+        && (resource.data.postedBy == request.auth.uid || resource.data.createdBy == request.auth.uid || isHOD());
 
       match /interests/{studentId} {
         allow read: if isFaculty();
         allow create: if isStudent() && isOwner(studentId);
+        allow update, delete: if false;
+      }
+
+      match /applicants/{applicantId} {
+        allow read: if isFaculty() || (isAuthed() && (applicantId == request.auth.uid || resource.data.studentUid == request.auth.uid));
+        allow create: if isAuthed()
+          && (applicantId == request.auth.uid || request.resource.data.studentUid == request.auth.uid)
+          && !exists(/databases/$(database)/documents/opportunities/$(opportunityId)/applicants/$(request.auth.uid));
         allow update, delete: if false;
       }
     }

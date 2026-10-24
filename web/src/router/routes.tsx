@@ -29,12 +29,10 @@ const NotificationsPage = lazy(() => import('@/pages/NotificationsPage'));
 const PollsPage = lazy(() => import('@/pages/PollsPage'));
 const CommunitiesPage = lazy(() => import('@/pages/CommunitiesPage'));
 const TalentPage = lazy(() => import('@/pages/TalentPage'));
+const ResourcesPage = lazy(() => import('@/pages/ResourcesPage').then(m => ({ default: m.ResourcesPage })));
 
-// Placeholder pages — static imports (no lazy; they're tiny stubs)
-import {
-  ResourcesPage,
-  OpportunitiesPage
-} from '@/pages/PlaceholderPage';
+const OpportunitiesPage = lazy(() => import('@/pages/OpportunitiesPage'));
+const StudentProfileViewPage = lazy(() => import('@/pages/StudentProfileViewPage'));
 
 // Suspense wrapper
 const withSuspense = (element: React.ReactNode): React.ReactNode => (
@@ -90,7 +88,6 @@ export const router = createBrowserRouter([
           {
             element: <RequireRole roles={['STUDENT']} />,
             children: [
-              { path: '/app/profile', element: withSuspense(<ProfilePage />) },
               { path: '/app/results', element: withSuspense(<ResultsPage />) },
             ],
           },
@@ -113,13 +110,16 @@ export const router = createBrowserRouter([
           },
 
           // Shared routes (all authenticated users)
+          { path: '/app/profile', element: withSuspense(<ProfilePage />) },
           { path: '/app/attendance', element: withSuspense(<AttendancePage />) },
           { path: '/app/notifications', element: withSuspense(<NotificationsPage />) },
           { path: '/app/polls', element: withSuspense(<PollsPage />) },
           { path: '/app/communities', element: withSuspense(<CommunitiesPage />) },
           { path: '/app/communities/join/:inviteCode', element: withSuspense(<CommunitiesPage />) },
-          { path: '/app/resources', element: <ResourcesPage /> },
-          { path: '/app/opportunities', element: <OpportunitiesPage /> },
+          { path: '/app/resources', element: withSuspense(<ResourcesPage />) },
+          { path: '/app/opportunities', element: withSuspense(<OpportunitiesPage />) },
+          { path: '/app/student-profile/:uid', element: withSuspense(<StudentProfileViewPage />) },
+          { path: '/student-profile/:uid', element: withSuspense(<StudentProfileViewPage />) },
         ],
       },
     ],

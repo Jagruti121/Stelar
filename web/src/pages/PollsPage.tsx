@@ -68,6 +68,20 @@ function CreatePollForm() {
   const [options, setOptions] = useState<string[]>(['', '']);
   const [submitting, setSubmitting] = useState(false);
 
+  // Fix 6: Targeting dropdowns
+  const [targetDept, setTargetDept] = useState<string>('all');
+  const [targetDivision, setTargetDivision] = useState<string>('all');
+  const [targetSemester, setTargetSemester] = useState<string>('all');
+
+  const DEPT_OPTIONS = [{ value: 'all', label: 'All Departments' }, { value: 'it', label: 'IT' }, { value: 'cs', label: 'CS' }];
+  const DIVISION_OPTIONS = [{ value: 'all', label: 'All Divisions' }, { value: 'A', label: 'A' }, { value: 'B', label: 'B' }, { value: 'C', label: 'C' }, { value: 'D', label: 'D' }];
+  const SEMESTER_OPTIONS = [
+    { value: 'all', label: 'All Semesters' },
+    { value: '1', label: 'Semester 1' }, { value: '2', label: 'Semester 2' },
+    { value: '3', label: 'Semester 3' }, { value: '4', label: 'Semester 4' },
+    { value: '5', label: 'Semester 5' }, { value: '6', label: 'Semester 6' },
+  ];
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const validOptions = options.filter(o => o.trim() !== '');
@@ -85,11 +99,16 @@ function CreatePollForm() {
         count: 0
       }));
 
+      // Fix 6: Build target payload from dropdowns
+      const deptIds = targetDept === 'all' ? [] : [targetDept];
+      const divisions = targetDivision === 'all' ? [] : [targetDivision];
+      const semester = targetSemester === 'all' ? null : Number(targetSemester);
+
       await setDoc(newRef, {
         id: newRef.id,
         question,
         options: pollOptions,
-        target: { deptIds: [], divisions: [] }, // all for demo
+        target: { deptIds, divisions, ...(semester !== null ? { semester } : {}) },
         anonymous: true,
         createdBy: user?.uid as string,
         createdAt: serverTimestamp() as any
@@ -99,6 +118,9 @@ function CreatePollForm() {
       setIsOpen(false);
       setQuestion('');
       setOptions(['', '']);
+      setTargetDept('all');
+      setTargetDivision('all');
+      setTargetSemester('all');
     } catch (err: any) {
       console.error(err);
       toast.error(err.message || 'Failed to create poll');
@@ -142,6 +164,32 @@ function CreatePollForm() {
             + Add Option
           </button>
         </div>
+
+        {/* Fix 6: Target Audience dropdowns */}
+        <div>
+          <label className="label">Target Audience</label>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-[10px] font-semibold text-[--text-muted] uppercase tracking-wider mb-1 block">Department</label>
+              <select className="input text-sm" value={targetDept} onChange={e => setTargetDept(e.target.value)}>
+                {DEPT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold text-[--text-muted] uppercase tracking-wider mb-1 block">Division</label>
+              <select className="input text-sm" value={targetDivision} onChange={e => setTargetDivision(e.target.value)}>
+                {DIVISION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold text-[--text-muted] uppercase tracking-wider mb-1 block">Semester / Year</label>
+              <select className="input text-sm" value={targetSemester} onChange={e => setTargetSemester(e.target.value)}>
+                {SEMESTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div className="flex gap-2 justify-end">
           <button type="button" onClick={() => setIsOpen(false)} className="btn-secondary">Cancel</button>
           <button type="submit" disabled={submitting} className="btn-primary flex items-center gap-2">

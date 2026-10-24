@@ -39,6 +39,7 @@ import type {
   Resource,
   Shortlist,
   Opportunity,
+  OpportunityApplicant,
   OpportunityInterest,
   AuditLog,
   DeptStats,
@@ -88,6 +89,7 @@ const communityInviteConverter = makeConverter<CommunityInvite>();
 const resourceConverter = makeConverter<Resource>();
 const shortlistConverter = makeConverter<Shortlist>();
 const opportunityConverter = makeConverter<Opportunity>();
+const opportunityApplicantConverter = makeConverter<OpportunityApplicant>();
 const opportunityInterestConverter = makeConverter<OpportunityInterest>();
 const auditLogConverter = makeConverter<AuditLog>();
 const deptStatsConverter = makeConverter<DeptStats>();
@@ -196,6 +198,13 @@ export const opportunityInterestsCol = (
 ): CollectionReference<OpportunityInterest> =>
   collection(db, 'opportunities', opportunityId, 'interests').withConverter(
     opportunityInterestConverter
+  );
+
+export const opportunityApplicantsCol = (
+  opportunityId: string
+): CollectionReference<OpportunityApplicant> =>
+  collection(db, 'opportunities', opportunityId, 'applicants').withConverter(
+    opportunityApplicantConverter
   );
 
 export const auditLogsCol = (): CollectionReference<AuditLog> =>

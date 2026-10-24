@@ -12,14 +12,35 @@ export const fanoutNotification = onDocumentCreated('notifications/{notification
   let query: CollectionReference | Query = db.collection('students');
 
   // Build query based on target type
-  if (target.type === 'dept' && target.deptIds && target.deptIds.length > 0) {
-    query = query.where('deptId', 'in', target.deptIds);
-  } else if (target.type === 'division' && target.divisions && target.divisions.length > 0) {
+  if (target?.type === 'dept') {
+    const rawTerms = [
+      ...(target.deptIds || []),
+      ...(target.department ? [target.department, target.department.toLowerCase()] : []),
+    ];
+    // Expand acronyms/names
+    const terms = new Set<string>();
+    rawTerms.forEach(t => {
+      terms.add(t);
+      terms.add(t.toLowerCase());
+      if (t.toLowerCase() === 'cs' || t.toLowerCase() === 'cse' || t.toLowerCase() === 'computer science') {
+        terms.add('cs');
+        terms.add('cse');
+        terms.add('computer science');
+        terms.add('Computer Science');
+      }
+      if (t.toLowerCase() === 'it' || t.toLowerCase() === 'information technology') {
+        terms.add('it');
+        terms.add('information technology');
+        terms.add('Information Technology');
+      }
+    });
+    const termsArray = Array.from(terms).slice(0, 30);
+    if (termsArray.length > 0) {
+      query = query.where('deptId', 'in', termsArray);
+    }
+  } else if (target?.type === 'division' && target.divisions && target.divisions.length > 0) {
     query = query.where('division', 'in', target.divisions);
-  } else if (target.type === 'students' && target.studentIds && target.studentIds.length > 0) {
-    // If it's a specific list of students, we can query in chunks of 30, 
-    // but for simplicity in this trigger we'll just do a single 'in' (max 30) or fetch all and filter.
-    // Assuming small targeted list for now.
+  } else if (target?.type === 'students' && target.studentIds && target.studentIds.length > 0) {
     query = query.where('id', 'in', target.studentIds.slice(0, 30));
   }
   // if 'all', query stays as all students
@@ -40,13 +61,12 @@ export const fanoutNotification = onDocumentCreated('notifications/{notification
       notificationId: snap.id,
       title: data.title,
       message: data.message,
+      priority: data.priority || 'casual',
       read: false,
       createdAt: FieldValue.serverTimestamp() // keeping the delivery time
     });
 
     count++;
-    // Firestore batch limit is 500. In production, we need to chunk batches.
-    // For this prototype, we'll assume less than 500 students per batch.
   });
 
   if (count > 0) {

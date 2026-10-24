@@ -61,6 +61,14 @@ export interface Staff {
 // ── students/{studentId} ───────────────────────────────────────────────────────
 // studentId = {deptCode}_{batch}_{division}_{roll}  (lowercase, deterministic)
 
+export interface StudentExperience {
+  id: string;
+  title: string;
+  company: string;
+  duration?: string;
+  description?: string;
+}
+
 export interface Student {
   id: string;
   name: string;
@@ -75,6 +83,10 @@ export interface Student {
   authUid: string | null; // null until first activation
   email: string;        // synthetic internal email (never shown to student)
   phone?: string;
+  address?: string;
+  bio?: string;
+  experience?: string | StudentExperience[];
+  skills?: string[];    // standardized array of strings
   profileCompleteness: number; // 0–100
   cgpa: number;
   createdAt: Timestamp;
@@ -115,8 +127,12 @@ export interface ProfilePrivacy {
 export interface StudentProfile {
   id: string;           // same as studentId
   photoUrl?: string;
+  name?: string;
+  phone?: string;
+  address?: string;
   bio: string;          // max 300 chars
-  skills: Skill[];
+  experience?: string | StudentExperience[];
+  skills: Skill[] | string[];
   skillKeys: string[];  // lowercased skill names for array-contains queries
   talentKeys: string[]; // lowercased talent strings
   interestKeys: string[]; // lowercased interest strings
@@ -232,7 +248,10 @@ export interface NotificationTarget {
   deptIds?: string[];
   divisions?: string[];
   studentIds?: string[];
+  year?: string;          // e.g. "First Year" — used when type is 'dept'
 }
+
+export type NotificationPriority = 'high' | 'low' | 'casual';
 
 export interface Notification {
   id: string;
@@ -240,6 +259,7 @@ export interface Notification {
   message: string;
   attachmentUrl?: string;
   target: NotificationTarget;
+  priority: NotificationPriority;
   createdBy: string;    // staff uid
   createdAt: Timestamp;
 }
@@ -252,6 +272,7 @@ export interface InboxItem {
   title: string;
   message: string;
   attachmentUrl?: string;
+  priority?: NotificationPriority; // may be absent in legacy items
   read: boolean;
   createdAt: Timestamp;
 }
@@ -292,6 +313,8 @@ export interface PollVote {
 
 // ── communities/{id} ──────────────────────────────────────────────────────────
 
+export type ChatPermissionType = 'one-side' | 'both-side';
+
 export interface CommunityRestriction {
   type: 'open' | 'dept' | 'invite';
   deptIds?: string[];
@@ -301,13 +324,20 @@ export interface Community {
   id: string;
   name: string;
   description: string;
+  adminName?: string;
+  targetAudience?: 'all' | 'dept';
+  department?: string;
+  chatPermission?: ChatPermissionType;
+  secretCode?: string;
+  members?: string[];
   iconUrl?: string;
-  restriction: CommunityRestriction;
+  restriction?: CommunityRestriction;
   ownerId: string;
-  inviteCode: string;
-  inviteEnabled: boolean;
+  inviteCode?: string;
+  inviteEnabled?: boolean;
   memberCount: number;
   createdAt: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 // ── communities/{id}/members/{uid} ────────────────────────────────────────────
@@ -391,16 +421,44 @@ export interface Shortlist {
 
 // ── opportunities/{id} ────────────────────────────────────────────────────────
 
+export type OpportunityType = 'Job' | 'Internship' | 'Hackathon' | 'Challenge';
+export type SalaryType = 'Paid' | 'Unpaid';
+
 export interface Opportunity {
   id: string;
-  title: string;
-  description: string;
-  requiredSkills: string[]; // lowercased skill keys
+  companyName: string;
+  jobRole: string;
+  jobDescription: string;
+  opportunityType: OpportunityType;
+  duration: string;
+  salaryType: SalaryType;
+  stipend?: string;
+  // Compatibility / optional fields
+  title?: string;
+  description?: string;
+  requiredSkills?: string[];
+  deptScope?: string[];
   deadline?: Timestamp;
-  deptScope: string[];      // deptIds, empty = all
   postedBy: string;
+  postedByName?: string;
+  postedByRole?: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+// ── opportunities/{id}/applicants/{applicantUid} ──────────────────────────────
+
+export interface OpportunityApplicant {
+  id: string;           // student auth UID (doc ID)
+  studentUid: string;
+  studentId: string;    // roll number or studentId
+  studentName: string;
+  studentEmail: string;
+  department?: string;
+  division?: string;
+  cgpa?: number;
+  resumeUrl?: string;
+  appliedAt: Timestamp;
 }
 
 // ── opportunities/{id}/interests/{studentId} ──────────────────────────────────

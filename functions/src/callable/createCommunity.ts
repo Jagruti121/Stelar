@@ -6,7 +6,11 @@ import { randomBytes } from 'crypto';
 
 const CreateCommunitySchema = z.object({
   name: z.string().min(2, 'Community name must be at least 2 characters').max(100),
-  description: z.string().max(1000).optional().default(''),
+  description: z.string().min(1, 'Description is required').max(1000),
+  adminName: z.string().min(1, 'Name of Admin is required').max(100).optional().default('Admin'),
+  targetAudience: z.enum(['all', 'dept']).optional().default('all'),
+  department: z.string().optional().default('All'),
+  chatPermission: z.enum(['one-side', 'both-side']).optional().default('both-side'),
   restrictionType: z.enum(['open', 'dept', 'invite']).optional().default('invite'),
   deptIds: z.array(z.string()).optional()
 });
@@ -35,8 +39,8 @@ export const createCommunity = onCall({ region: 'us-central1' }, async (request)
     throw new HttpsError('invalid-argument', 'Invalid payload', error.errors);
   }
 
-  // Generate 8 char invite code
-  const inviteCode = randomBytes(4).toString('hex').toUpperCase();
+  // Generate 6-8 char unique alphanumeric Secret Code
+  const secretCode = randomBytes(3).toString('hex').toUpperCase();
 
   const communityRef = db.collection('communities').doc();
   const memberRef = communityRef.collection('members').doc(request.auth.uid);
@@ -47,13 +51,19 @@ export const createCommunity = onCall({ region: 'us-central1' }, async (request)
     id: communityRef.id,
     name: data.name,
     description: data.description,
+    adminName: data.adminName || request.auth.token.name || 'Faculty Admin',
+    targetAudience: data.targetAudience,
+    department: data.department,
+    chatPermission: data.chatPermission,
     restriction: {
       type: data.restrictionType,
       deptIds: data.deptIds || []
     },
     ownerId: request.auth.uid,
-    inviteCode,
+    secretCode,
+    inviteCode: secretCode,
     inviteEnabled: true,
+    members: [request.auth.uid],
     memberCount: 1,
     createdAt: FieldValue.serverTimestamp()
   });
@@ -61,12 +71,12 @@ export const createCommunity = onCall({ region: 'us-central1' }, async (request)
   batch.set(memberRef, {
     id: request.auth.uid,
     uid: request.auth.uid,
-    name: request.auth.token.name || 'Faculty',
+    name: data.adminName || request.auth.token.name || 'Faculty',
     role: 'owner',
     joinedAt: FieldValue.serverTimestamp()
   });
 
   await batch.commit();
 
-  return { success: true, id: communityRef.id, inviteCode };
+  return { success: true, id: communityRef.id, secretCode, inviteCode: secretCode };
 });
