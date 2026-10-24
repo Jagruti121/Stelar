@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Loader2 } from 'lucide-react';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { auth, db } from '@/lib/firebase';
+import { CANONICAL_DEPARTMENTS, normalizeDepartment } from '@/pages/NotificationsPage';
 
 export default function RegisterPage(): React.ReactElement {
   const navigate = useNavigate();
@@ -18,7 +19,7 @@ export default function RegisterPage(): React.ReactElement {
   const [name, setName] = useState(stateData?.name || '');
   const [email, setEmail] = useState(stateData?.email || '');
   const [empId, setEmpId] = useState('');
-  const [department, setDepartment] = useState('');
+  const [department, setDepartment] = useState('Computer Science');
   const [role, setRole] = useState<'HOD' | 'FACULTY'>('FACULTY');
   const [password, setPassword] = useState('');
   const [secretCode, setSecretCode] = useState('');
@@ -52,6 +53,8 @@ export default function RegisterPage(): React.ReactElement {
 
       const staffRoles = role === 'HOD' ? ['HOD', 'FACULTY'] : ['FACULTY'];
 
+      const canonicalDept = normalizeDepartment(department);
+
       // Save staff document in Firestore
       try {
         await setDoc(doc(db, 'staff', userCred.user.uid), {
@@ -59,7 +62,8 @@ export default function RegisterPage(): React.ReactElement {
           name: name.trim(),
           email: email.trim(),
           employeeId: empId.trim(),
-          deptId: department.trim().toLowerCase(),
+          deptId: canonicalDept.toLowerCase(),
+          department: canonicalDept,
           roles: staffRoles,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -81,7 +85,8 @@ export default function RegisterPage(): React.ReactElement {
       // Cache role information locally for instant offline/direct resolution
       localStorage.setItem('stellar_local_roles', JSON.stringify({
         roles: staffRoles,
-        deptId: department.trim().toLowerCase(),
+        deptId: canonicalDept.toLowerCase(),
+        department: canonicalDept,
         name: name.trim()
       }));
 
@@ -163,15 +168,20 @@ export default function RegisterPage(): React.ReactElement {
             </div>
             <div>
               <label htmlFor="department" className="label">Department</label>
-              <input
+              <select
                 id="department"
-                className="input"
-                placeholder="e.g. CSE"
+                className="input cursor-pointer"
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
                 required
                 disabled={loading}
-              />
+              >
+                {CANONICAL_DEPARTMENTS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

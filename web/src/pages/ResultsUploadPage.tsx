@@ -95,7 +95,6 @@ export default function ResultsUploadPage(): React.ReactElement {
       }
 
       const studentResultsMap = new Map<string, any>();
-      const deptId = claims?.deptId || 'cs';
 
       rows.forEach((row, index) => {
         const rawSid = getField(row, 'StudentID', 'Student_ID', 'Student ID', 'RollNo', 'Roll_No', 'Roll No', 'Roll', 'ID');
@@ -112,11 +111,8 @@ export default function ResultsUploadPage(): React.ReactElement {
           throw new Error(`Row ${index + 2}: Missing subject code column (expected SubCode or Subject).`);
         }
 
-        // Parse student ID: If just a roll number (e.g. "1" or "42"), construct full student ID
-        let sid = String(rawSid).trim().toLowerCase();
-        if (/^\d+$/.test(sid)) {
-          sid = `${deptId}_sem${semester}_divA_${sid}`;
-        }
+        // Parse student ID: preserve clean identifier so bulkUploadResults can mirror both roll numbers and composite IDs
+        let sid = String(rawSid).trim();
 
         const marks = rawMarks !== undefined ? Number(rawMarks) : 0;
         const maxMarks = rawMaxMarks !== undefined ? Number(rawMaxMarks) : 100;

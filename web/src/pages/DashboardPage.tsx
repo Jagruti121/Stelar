@@ -9,7 +9,7 @@ import {
   Hash, Search, ChevronRight, BarChart2, AlertTriangle
 } from 'lucide-react';
 import { studentDoc, inboxCol } from '@/lib/firestore';
-import { DEPARTMENT_MAP, normalizePriority, getPriorityConfig } from '@/pages/NotificationsPage';
+import { normalizePriority, getPriorityConfig, normalizeDepartment } from '@/pages/NotificationsPage';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend, LineChart, Line
@@ -48,10 +48,10 @@ function StudentDashboard({ studentId }: { studentId: string }) {
           setProfileComp(sSnap.data().profileCompleteness || 0);
           const studentData = sSnap.data() as any;
           const rawDept = (studentData.department || (claims as any)?.department || claims?.deptId || 'CS').toString();
-          studentDept = DEPARTMENT_MAP[rawDept] || DEPARTMENT_MAP[rawDept.toUpperCase()] || 'Computer Science';
+          studentDept = normalizeDepartment(rawDept);
         } else {
           const rawDept = ((claims as any)?.department || claims?.deptId || 'CS').toString();
-          studentDept = DEPARTMENT_MAP[rawDept] || DEPARTMENT_MAP[rawDept.toUpperCase()] || 'Computer Science';
+          studentDept = normalizeDepartment(rawDept);
         }
 
         let deptNotifs: any[] = [];
@@ -273,15 +273,14 @@ function FacultyDashboard({ deptId, isHOD, name }: { deptId: string, isHOD: bool
   const [notifData, setNotifData] = useState<{ name: string; value: number }[]>([]);
   const [analyticsLoading, setAnalyticsLoading] = useState(true);
 
-  // Fix 8: Real-time student count listener — updates whenever the students collection changes
+  // Real-time student count listener — updates whenever the students collection changes
   useEffect(() => {
-    const q = query(collection(db, 'students'), where('deptId', '==', deptId.toLowerCase()));
-    const unsub = onSnapshot(q, snap => {
+    // Query all students (not filtered by deptId) so that uploaded students from
+    // the Student Management page are always counted regardless of deptId format.
+    const unsub = onSnapshot(collection(db, 'students'), snap => {
       setTotalStudents(snap.size);
     }, err => {
       console.error('Student count listener:', err);
-      // Fallback: count without filter
-      onSnapshot(collection(db, 'students'), s => setTotalStudents(s.size));
     });
     return () => unsub();
   }, [deptId]);

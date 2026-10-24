@@ -2,8 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { inboxCol } from '@/lib/firestore';
 import {
-  collection, where, onSnapshot, query, orderBy,
-  serverTimestamp, addDoc
+  collection, where, onSnapshot, query, orderBy, doc, getDoc, getDocs, limit,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/lib/firebase';
@@ -16,19 +15,81 @@ import type { InboxItem } from '@/types/firestore';
 const sendNotification = httpsCallable(functions, 'sendNotification');
 
 // ── Department Normalization Dictionary ───────────────────────────────────────
+// CANONICAL VALUES: 'Computer Science' | 'Information Technology' | 'Data Science' | 'Engineering' | 'Other'
+// ALL department fields stored in Firestore must use these exact canonical strings.
+
+export const CANONICAL_DEPARTMENTS = [
+  'Computer Science',
+  'Information Technology',
+  'Data Science',
+  'Engineering',
+  'Other',
+] as const;
+
+export type CanonicalDepartment = typeof CANONICAL_DEPARTMENTS[number];
 
 export const DEPARTMENT_MAP: Record<string, string> = {
+  // Computer Science aliases
   'CS': 'Computer Science',
-  'IT': 'Information Technology',
-  'Engineering': 'Engineering',
-  'Other': 'Other',
-  'Computer Science': 'Computer Science',
-  'Information Technology': 'Information Technology',
+  'cs': 'Computer Science',
+  'C.S': 'Computer Science',
+  'c.s': 'Computer Science',
+  'C.S.': 'Computer Science',
   'CSE': 'Computer Science',
   'cse': 'Computer Science',
-  'cs': 'Computer Science',
+  'COMP': 'Computer Science',
+  'comp': 'Computer Science',
+  'Computer Science': 'Computer Science',
+  'computer science': 'Computer Science',
+  'COMPUTER SCIENCE': 'Computer Science',
+  'ComputerScience': 'Computer Science',
+  // Information Technology aliases
+  'IT': 'Information Technology',
   'it': 'Information Technology',
+  'I.T': 'Information Technology',
+  'i.t': 'Information Technology',
+  'I.T.': 'Information Technology',
+  'Information Technology': 'Information Technology',
+  'information technology': 'Information Technology',
+  'INFORMATION TECHNOLOGY': 'Information Technology',
+  'InformationTechnology': 'Information Technology',
+  // Data Science aliases
+  'DS': 'Data Science',
+  'ds': 'Data Science',
+  'D.S': 'Data Science',
+  'd.s': 'Data Science',
+  'D.S.': 'Data Science',
+  'DataScience': 'Data Science',
+  'Data Science': 'Data Science',
+  'data science': 'Data Science',
+  'DATA SCIENCE': 'Data Science',
+  // Engineering aliases
+  'ENG': 'Engineering',
+  'eng': 'Engineering',
+  'Engineering': 'Engineering',
+  'engineering': 'Engineering',
+  'ENGINEERING': 'Engineering',
+  // Other
+  'Other': 'Other',
+  'other': 'Other',
+  'OTHER': 'Other',
 };
+
+/**
+ * Normalizes ANY department string to its canonical form.
+ * Always use this before writing 'department' to Firestore.
+ */
+export function normalizeDepartment(raw?: string): string {
+  if (!raw) return 'Other';
+  const trimmed = raw.trim();
+  if (DEPARTMENT_MAP[trimmed]) return DEPARTMENT_MAP[trimmed];
+  // Case-insensitive fallback
+  const lower = trimmed.toLowerCase();
+  for (const [key, val] of Object.entries(DEPARTMENT_MAP)) {
+    if (key.toLowerCase() === lower) return val;
+  }
+  return trimmed; // return as-is if unknown
+}
 
 // ── Priority definitions ──────────────────────────────────────────────────────
 
@@ -150,14 +211,46 @@ export default function NotificationsPage(): React.ReactElement {
 // ── Student Inbox (FIX 4 & FIX 11) ───────────────────────────────────────────
 
 function StudentInbox({ studentId }: { studentId: string }) {
-  const { claims } = useAuth();
+  const { claims, user } = useAuth();
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [studentDept, setStudentDept] = useState<string>(() => {
+    const rawDept = ((claims as any)?.department || claims?.deptId || 'CS').toString();
+    return normalizeDepartment(rawDept);
+  });
+
+  // Fallback: Resolve student department directly from Firestore document
+  useEffect(() => {
+    let isMounted = true;
+    async function resolveDept() {
+      try {
+        if (studentId) {
+          const sSnap = await getDoc(doc(db, 'students', studentId));
+          if (sSnap.exists() && isMounted) {
+            const data = sSnap.data();
+            const d = data.department || data.deptId;
+            if (d) setStudentDept(normalizeDepartment(d));
+            return;
+          }
+        }
+        if (user?.uid) {
+          const q = query(collection(db, 'students'), where('authUid', '==', user.uid), limit(1));
+          const qSnap = await getDocs(q);
+          if (!qSnap.empty && isMounted) {
+            const data = qSnap.docs[0].data();
+            const d = data.department || data.deptId;
+            if (d) setStudentDept(normalizeDepartment(d));
+          }
+        }
+      } catch (err) {
+        console.warn('Could not resolve student department doc:', err);
+      }
+    }
+    resolveDept();
+    return () => { isMounted = false; };
+  }, [studentId, user?.uid]);
 
   useEffect(() => {
-    const rawDept = ((claims as any)?.department || claims?.deptId || 'CS').toString().toUpperCase();
-    const studentDept = DEPARTMENT_MAP[rawDept] || (rawDept === 'CSE' ? 'Computer Science' : rawDept);
-
     let inboxItems: InboxItem[] = [];
     let deptItems: InboxItem[] = [];
 
@@ -191,27 +284,33 @@ function StudentInbox({ studentId }: { studentId: string }) {
       );
     }
 
-    // 2. Department standardized query listener: where("department", "==", studentDept)
+    // 2. Department standardized notifications listener: matches canonical department & 'All'
     const qDept = query(
       collection(db, 'notifications'),
-      where("department", "==", studentDept),
-      orderBy('createdAt', 'desc')
+      orderBy('createdAt', 'desc'),
+      limit(50)
     );
     const unsubDept = onSnapshot(
       qDept,
       (snap) => {
-        deptItems = snap.docs.map(d => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            notificationId: d.id,
+        deptItems = snap.docs
+          .map(d => ({ ...(d.data() as any), id: d.id }))
+          .filter(data => {
+            const notifDept = data.department || data.target?.department;
+            const notifType = data.target?.type;
+            if (notifType === 'all' || notifDept === 'All') return true;
+            if (!notifDept) return true;
+            return normalizeDepartment(notifDept) === studentDept;
+          })
+          .map(data => ({
+            id: data.id,
+            notificationId: data.id,
             title: data.title || '',
             message: data.message || '',
             priority: (data.priority as NotificationPriority) || 'casual',
             read: false,
             createdAt: data.createdAt,
-          } as InboxItem;
-        });
+          } as InboxItem));
         updateCombined();
       },
       (err) => {
@@ -224,7 +323,7 @@ function StudentInbox({ studentId }: { studentId: string }) {
       unsubInbox();
       unsubDept();
     };
-  }, [studentId, claims]);
+  }, [studentId, studentDept]);
 
   if (loading) return <div className="flex justify-center p-10"><Loader2 className="animate-spin text-[--primary]" /></div>;
 
@@ -289,18 +388,23 @@ interface SentNotificationRecord {
   createdAt: any;
 }
 
-const DEPT_OPTIONS = ['CS', 'IT', 'Engineering', 'Other'];
+const DEPT_OPTIONS = [
+  { label: 'Computer Science (CS)', value: 'Computer Science' },
+  { label: 'Information Technology (IT)', value: 'Information Technology' },
+  { label: 'Data Science (DS)', value: 'Data Science' },
+  { label: 'Engineering', value: 'Engineering' },
+  { label: 'Other', value: 'Other' },
+];
 const DIVISION_OPTIONS = ['A', 'B', 'C', 'D'];
 const YEAR_OPTIONS = ['First Year', 'Second Year', 'Third Year'];
 
 function FacultySender() {
-  const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   // Primary audience selector: 'all' | 'dept'
   const [audienceType, setAudienceType] = useState<'all' | 'dept'>('all');
   // Secondary dropdowns for "Specific Department"
-  const [targetDept, setTargetDept] = useState('CS');
+  const [targetDept, setTargetDept] = useState('Computer Science');
   const [targetDivision, setTargetDivision] = useState('A');
   const [targetYear, setTargetYear] = useState('First Year');
   // Priority: 'high' | 'low' | 'casual'
@@ -353,46 +457,29 @@ function FacultySender() {
     setLoading(true);
 
     try {
-      // FIX 1: Normalize department acronyms ("CS") to database profile string ("Computer Science")
-      const normalizedDept = audienceType === 'dept' ? (DEPARTMENT_MAP[targetDept] || targetDept) : 'All';
+      // Normalize department to canonical form (e.g. 'CS' → 'Computer Science')
+      // This ensures exact match with student profile data stored in Firestore
+      const normalizedDept = audienceType === 'dept' ? normalizeDepartment(targetDept) : 'All';
       const target: any = { type: audienceType === 'all' ? 'all' : 'dept' };
 
       if (audienceType === 'dept') {
         target.department = normalizedDept;
-        target.deptIds = [
-          targetDept.toLowerCase(),
-          normalizedDept.toLowerCase(),
-          'cs',
-          'cse',
-          'computer science',
-          'it',
-          'information technology'
-        ];
         target.divisions = [targetDivision.toUpperCase()];
         target.year = targetYear;
       }
 
-      // FIX 3: Ensure exact priority string is bound and saved into Firestore document
       const payload: any = {
         title: title.trim(),
         message: message.trim(),
         target,
         department: normalizedDept,
-        priority: priority, // Exact priority string (e.g. 'high', 'High Priority', 'High Alert')
-        priorityLevel: priority,
-        createdBy: user?.uid || 'faculty',
-        createdAt: serverTimestamp(),
+        priority: priority,
       };
 
-      // 1. Direct write to Firestore ensures exact fields are immediately committed
-      await addDoc(collection(db, 'notifications'), payload);
-
-      // 2. Also invoke Cloud Function for fanout if deployed
-      try {
-        await sendNotification(payload);
-      } catch (fnErr) {
-        console.warn('sendNotification fanout note:', fnErr);
-      }
+      // FIX: Only call the Cloud Function — it is responsible for writing to Firestore.
+      // Previously, this code called addDoc() AND sendNotification() which caused
+      // duplicate notifications: students received the same message TWICE.
+      await sendNotification(payload);
 
       toast.success('Notification dispatched successfully');
       setTitle('');
@@ -401,7 +488,7 @@ function FacultySender() {
       setAudienceType('all');
     } catch (err: any) {
       console.error(err);
-      toast.error('Failed to send notification');
+      toast.error('Failed to send notification: ' + (err.message || 'Error'));
     } finally {
       setLoading(false);
     }
@@ -496,8 +583,8 @@ function FacultySender() {
                         onChange={e => setTargetDept(e.target.value)}
                       >
                         {DEPT_OPTIONS.map(d => (
-                          <option key={d} value={d}>
-                            {d} ({DEPARTMENT_MAP[d] || d})
+                          <option key={d.value} value={d.value}>
+                            {d.label}
                           </option>
                         ))}
                       </select>

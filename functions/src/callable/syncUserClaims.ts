@@ -21,17 +21,20 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
     }
 
     const deptId = data.deptId || data.department || '';
+    const department = data.department || data.deptId || '';
 
     await auth.setCustomUserClaims(uid, {
       roles,
-      deptId
+      deptId,
+      department
     });
 
     return {
       success: true,
       type: 'staff',
       roles,
-      deptId
+      deptId,
+      department
     };
   }
 
@@ -41,13 +44,15 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
     const data = studentSnap.data() || {};
     const roles = ['STUDENT'];
     const studentId = data.id || uid;
-    const deptId = data.deptId || '';
+    const deptId = data.deptId || data.department || '';
+    const department = data.department || data.deptId || '';
     const division = data.division || '';
 
     await auth.setCustomUserClaims(uid, {
       roles,
       studentId,
       deptId,
+      department,
       division
     });
 
@@ -57,6 +62,7 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
       roles,
       studentId,
       deptId,
+      department,
       division
     };
   }
@@ -67,13 +73,15 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
     const data = studentByAuthSnap.docs[0].data() || {};
     const roles = ['STUDENT'];
     const studentId = data.id || studentByAuthSnap.docs[0].id;
-    const deptId = data.deptId || '';
+    const deptId = data.deptId || data.department || '';
+    const department = data.department || data.deptId || '';
     const division = data.division || '';
 
     await auth.setCustomUserClaims(uid, {
       roles,
       studentId,
       deptId,
+      department,
       division
     });
 
@@ -83,6 +91,7 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
       roles,
       studentId,
       deptId,
+      department,
       division
     };
   }

@@ -9,6 +9,7 @@ import { db } from '@/lib/firebase';
 import { 
   collection, doc, getDocs, writeBatch, serverTimestamp 
 } from 'firebase/firestore';
+import { normalizeDepartment } from '@/pages/NotificationsPage';
 
 interface StudentRosterItem {
   srNo: number;
@@ -186,7 +187,8 @@ export default function StudentsPage(): React.ReactElement {
 
       const rollNo = String(rollNoRaw).trim();
       const name = String(nameRaw).trim();
-      const department = String(deptRaw).trim();
+      // Normalize to canonical department name so it always matches Firestore queries
+      const department = normalizeDepartment(String(deptRaw).trim());
       const year = String(yearRaw).trim();
       const sem = Number(semRaw) || 1;
       const division = String(divRaw).trim().toUpperCase();
@@ -204,13 +206,13 @@ export default function StudentsPage(): React.ReactElement {
         srNo,
         rollNo,
         name,
-        department,
-        deptId: department.toLowerCase(),
+        department,                      // canonical: 'Computer Science', 'Information Technology', etc.
+        deptId: department.toLowerCase(), // lowercase canonical for Firestore queries
         year,
         semester: sem,
         sem,
         division,
-        activationCode, // Stored for HOD export and registration
+        activationCode,
         activationCodeHash: hashedCode,
         isActive: false,
         createdAt: serverTimestamp(),

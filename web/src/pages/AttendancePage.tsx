@@ -3,7 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/lib/firebase';
 import { 
   collection, query, where, getDocs, doc, setDoc, 
-  serverTimestamp, onSnapshot, writeBatch 
+  serverTimestamp, onSnapshot, writeBatch, orderBy 
 } from 'firebase/firestore';
 import { attendanceSummaryDoc } from '@/lib/firestore';
 import { read, utils } from 'xlsx';
@@ -11,7 +11,8 @@ import { toast } from 'sonner';
 import { 
   Loader2, CheckCircle2, UserX, Clock, 
   BookOpen, Layers, Users, Calendar, Sparkles, CheckCheck, 
-  RotateCcw, Upload, FileSpreadsheet, Search, Check
+  RotateCcw, Upload, FileSpreadsheet, Search, Check, History,
+  ChevronDown, Filter
 } from 'lucide-react';
 import type { AttendanceSummary } from '@/types/firestore';
 
@@ -156,6 +157,9 @@ function FacultyAttendancePortal({
   facultyName: string; 
   deptId: string; 
 }) {
+  // Tab state: 'mark' | 'history'
+  const [activeTab, setActiveTab] = useState<'mark' | 'history'>('mark');
+
   // Session Configuration Form
   const [subjectName, setSubjectName] = useState('');
   const [semester, setSemester] = useState<number>(1);
@@ -489,6 +493,42 @@ function FacultyAttendancePortal({
         </div>
       </div>
 
+      {/* Tab Bar */}
+      <div className="flex rounded-xl bg-gray-100 p-1 border border-gray-200 w-fit">
+        <button
+          type="button"
+          onClick={() => setActiveTab('mark')}
+          className={`flex items-center gap-1.5 py-1.5 px-4 text-xs font-semibold rounded-lg transition-all ${
+            activeTab === 'mark'
+              ? 'bg-white text-[--primary] shadow-sm border border-gray-200/80'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          <CheckCircle2 className="h-3.5 w-3.5" />
+          Mark Attendance
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('history')}
+          className={`flex items-center gap-1.5 py-1.5 px-4 text-xs font-semibold rounded-lg transition-all ${
+            activeTab === 'history'
+              ? 'bg-white text-[--primary] shadow-sm border border-gray-200/80'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          <History className="h-3.5 w-3.5" />
+          View History
+        </button>
+      </div>
+
+      {/* ── History Tab ──────────────────────────────────────── */}
+      {activeTab === 'history' && (
+        <AttendanceHistoryView deptId={deptId} />
+      )}
+
+      {activeTab === 'mark' && (
+        <div className="space-y-4">
+
       {/* Control Panel / Filter Configuration */}
       <div className="card shadow-sm border border-gray-200">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -786,6 +826,277 @@ function FacultyAttendancePortal({
           </div>
         )}
       </div>
+    </div>
+  )} {/* end activeTab === 'mark' */}
+</div>
+);
+}
+
+// ────────────────────────────────────────────────────────────────────────────────
+// ATTENDANCE HISTORY VIEW (Faculty/HOD) — filterable by dept, class, date
+// ────────────────────────────────────────────────────────────────────────────────
+interface AttendanceSessionRecord {
+  id: string;
+  subjectName: string;
+  subjectId: string;
+  deptId: string;
+  semester: number;
+  division: string;
+  date: string;
+  lectureHours: number;
+  facultyName: string;
+  presentIds: string[];
+  absentIds: string[];
+  presentRolls: string[];
+  absentRolls: string[];
+  presentCount: number;
+  absentCount: number;
+  totalCount: number;
+  createdAt: any;
+}
+
+function AttendanceHistoryView({ deptId }: { deptId: string }) {
+  const [sessions, setSessions] = useState<AttendanceSessionRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Filters
+  const [filterDivision, setFilterDivision] = useState('ALL');
+  const [filterSemester, setFilterSemester] = useState('ALL');
+  const [filterDate, setFilterDate] = useState('');
+  const [filterSubject, setFilterSubject] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    // Load all sessions ordered by date desc
+    const q = query(
+      collection(db, 'attendanceSessions'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      const records: AttendanceSessionRecord[] = snap.docs.map(d => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          subjectName: data.subjectName || data.subjectId || '—',
+          subjectId: data.subjectId || '',
+          deptId: data.deptId || '',
+          semester: data.semester || 0,
+          division: data.division || '',
+          date: data.date || '',
+          lectureHours: data.lectureHours || 1,
+          facultyName: data.facultyName || 'Faculty',
+          presentIds: data.presentIds || [],
+          absentIds: data.absentIds || [],
+          presentRolls: data.presentRolls || [],
+          absentRolls: data.absentRolls || [],
+          presentCount: data.presentCount || 0,
+          absentCount: data.absentCount || 0,
+          totalCount: data.totalCount || 0,
+          createdAt: data.createdAt,
+        };
+      });
+      setSessions(records);
+      setLoading(false);
+    }, (err) => {
+      console.warn('Attendance history listener:', err);
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [deptId]);
+
+  const filtered = useMemo(() => {
+    return sessions.filter(s => {
+      const divMatch = filterDivision === 'ALL' || s.division.toUpperCase() === filterDivision;
+      const semMatch = filterSemester === 'ALL' || String(s.semester) === filterSemester;
+      const dateMatch = !filterDate || s.date === filterDate;
+      const subjMatch = !filterSubject.trim() || s.subjectName.toLowerCase().includes(filterSubject.toLowerCase());
+      return divMatch && semMatch && dateMatch && subjMatch;
+    });
+  }, [sessions, filterDivision, filterSemester, filterDate, filterSubject]);
+
+  return (
+    <div className="space-y-5">
+      {/* Filters */}
+      <div className="card shadow-sm border border-gray-200">
+        <div className="flex items-center gap-2 mb-3">
+          <Filter className="h-4 w-4 text-[--primary]" />
+          <h3 className="font-semibold text-sm text-[--text]">Filter Attendance Records</h3>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {/* Division Filter */}
+          <div>
+            <label className="text-[10px] font-bold uppercase text-gray-500 mb-1 block">Division</label>
+            <select
+              className="input py-1.5 text-xs font-medium"
+              value={filterDivision}
+              onChange={e => setFilterDivision(e.target.value)}
+            >
+              <option value="ALL">All Divisions</option>
+              {['A', 'B', 'C', 'D'].map(div => (
+                <option key={div} value={div}>Division {div}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Semester Filter */}
+          <div>
+            <label className="text-[10px] font-bold uppercase text-gray-500 mb-1 block">Semester</label>
+            <select
+              className="input py-1.5 text-xs font-medium"
+              value={filterSemester}
+              onChange={e => setFilterSemester(e.target.value)}
+            >
+              <option value="ALL">All Semesters</option>
+              {[1, 2, 3, 4, 5, 6].map(sem => (
+                <option key={sem} value={String(sem)}>Semester {sem}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Date Filter */}
+          <div>
+            <label className="text-[10px] font-bold uppercase text-gray-500 mb-1 block">Date</label>
+            <input
+              type="date"
+              className="input py-1.5 text-xs"
+              value={filterDate}
+              onChange={e => setFilterDate(e.target.value)}
+            />
+          </div>
+
+          {/* Subject Filter */}
+          <div>
+            <label className="text-[10px] font-bold uppercase text-gray-500 mb-1 block">Subject</label>
+            <input
+              type="text"
+              className="input py-1.5 text-xs"
+              placeholder="Search subject..."
+              value={filterSubject}
+              onChange={e => setFilterSubject(e.target.value)}
+            />
+          </div>
+        </div>
+
+        {(filterDivision !== 'ALL' || filterSemester !== 'ALL' || filterDate || filterSubject) && (
+          <button
+            type="button"
+            onClick={() => { setFilterDivision('ALL'); setFilterSemester('ALL'); setFilterDate(''); setFilterSubject(''); }}
+            className="mt-3 text-xs text-[--primary] font-semibold hover:underline flex items-center gap-1"
+          >
+            <RotateCcw className="h-3 w-3" /> Clear Filters
+          </button>
+        )}
+      </div>
+
+      {/* Result count */}
+      <p className="text-xs text-[--text-muted] font-medium">
+        Showing <span className="font-bold text-[--text]">{filtered.length}</span> of {sessions.length} attendance sessions
+      </p>
+
+      {/* Session List */}
+      {loading ? (
+        <div className="flex justify-center p-12">
+          <Loader2 className="h-8 w-8 animate-spin text-[--primary]" />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="card text-center py-14">
+          <Calendar className="h-10 w-10 text-gray-300 mx-auto mb-2" />
+          <p className="font-semibold text-gray-600">No attendance sessions found</p>
+          <p className="text-xs text-gray-400 mt-1">Try adjusting your filters or mark attendance for a class first.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(session => {
+            const pct = session.totalCount > 0 ? Math.round((session.presentCount / session.totalCount) * 100) : 0;
+            const isExpanded = expandedId === session.id;
+            return (
+              <div key={session.id} className="card border border-gray-200 shadow-sm overflow-hidden">
+                {/* Session Header */}
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(isExpanded ? null : session.id)}
+                  className="w-full text-left"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-blue-50 rounded-lg">
+                        <Calendar className="h-4 w-4 text-blue-600" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-sm text-[--text]">{session.subjectName}</p>
+                        <p className="text-xs text-[--text-muted]">
+                          Sem {session.semester} · Div {session.division} · {session.lectureHours}hr
+                          {session.facultyName ? ` · ${session.facultyName}` : ''}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                          {session.date}
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">
+                          {session.presentCount}✓ Present
+                        </span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">
+                          {session.absentCount}✗ Absent
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          pct >= 75 ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          {pct}%
+                        </span>
+                      </div>
+                      <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                    </div>
+                  </div>
+                </button>
+
+                {/* Expanded Details */}
+                {isExpanded && (
+                  <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Present Students */}
+                    <div>
+                      <h4 className="text-xs font-bold text-green-700 mb-2 flex items-center gap-1.5">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Present ({session.presentCount})
+                      </h4>
+                      <div className="flex flex-wrap gap-1.5">
+                        {session.presentRolls.length > 0 ? session.presentRolls.map((roll, i) => (
+                          <span key={i} className="text-[10px] font-mono px-2 py-0.5 bg-green-50 text-green-800 border border-green-200 rounded-full">
+                            #{roll}
+                          </span>
+                        )) : (
+                          <span className="text-xs text-gray-400">No data available</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Absent Students */}
+                    <div>
+                      <h4 className="text-xs font-bold text-red-600 mb-2 flex items-center gap-1.5">
+                        <UserX className="h-3.5 w-3.5" />
+                        Absent ({session.absentCount})
+                      </h4>
+                      <div className="flex flex-wrap gap-1.5">
+                        {session.absentRolls.length > 0 ? session.absentRolls.map((roll, i) => (
+                          <span key={i} className="text-[10px] font-mono px-2 py-0.5 bg-red-50 text-red-700 border border-red-200 rounded-full">
+                            #{roll}
+                          </span>
+                        )) : (
+                          <span className="text-xs text-gray-400">All present or no data</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

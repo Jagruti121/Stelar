@@ -47,16 +47,20 @@ export const bulkUploadResults = onCall({ region: 'us-central1' }, async (reques
   
   for (const res of results) {
     const rawId = res.studentId.trim();
-    const cleanRoll = rawId.toUpperCase().replace('STUDENT_', '');
-    const standardStudentId = 'student_' + cleanRoll;
+    const cleanRoll = rawId.toUpperCase().replace(/^STUDENT_/, '');
+    
+    // Extract pure roll if composite key like dept_semX_divY_roll or dept_roll
+    const compositeMatch = rawId.match(/_div[a-zA-Z0-9]+_([a-zA-Z0-9]+)$/i) || rawId.match(/_([a-zA-Z0-9]+)$/);
+    const pureRoll = (compositeMatch && compositeMatch[1]) ? compositeMatch[1].toUpperCase() : cleanRoll;
 
+    const standardStudentId = 'student_' + pureRoll;
     const resultId = `${rawId}_${semester}`;
     const resultRef = db.collection('results').doc(resultId);
     
     const resultPayload = {
       id: resultId,
       studentId: rawId,
-      rollNo: cleanRoll,
+      rollNo: pureRoll,
       semester,
       sgpa: res.sgpa,
       subjectMarks: res.subjectMarks,
@@ -66,38 +70,36 @@ export const bulkUploadResults = onCall({ region: 'us-central1' }, async (reques
 
     batch.set(resultRef, resultPayload, { merge: true });
 
-    // Also mirror to standard student_ID doc if different
-    if (resultId !== `${standardStudentId}_${semester}`) {
-      const mirrorRef = db.collection('results').doc(`${standardStudentId}_${semester}`);
-      batch.set(mirrorRef, {
-        ...resultPayload,
-        id: `${standardStudentId}_${semester}`,
-        studentId: standardStudentId
-      }, { merge: true });
+    // Key variations to mirror to ensure instant lookup by any identifier
+    const mirrorKeys = new Set<string>([
+      `${standardStudentId}_${semester}`,
+      `student_${cleanRoll}_${semester}`,
+      `${pureRoll}_${semester}`,
+      `${pureRoll.toLowerCase()}_${semester}`,
+      `${cleanRoll}_${semester}`,
+      `${cleanRoll.toLowerCase()}_${semester}`,
+    ]);
+
+    for (const key of mirrorKeys) {
+      if (key !== resultId) {
+        const mirrorRef = db.collection('results').doc(key);
+        batch.set(mirrorRef, {
+          ...resultPayload,
+          id: key,
+          studentId: key.replace(new RegExp(`_${semester}$`), '')
+        }, { merge: true });
+      }
     }
 
-    // Also mirror to lowercase roll doc (e.g. cs1001_5)
-    if (resultId !== `${cleanRoll.toLowerCase()}_${semester}`) {
-      const lowerRef = db.collection('results').doc(`${cleanRoll.toLowerCase()}_${semester}`);
-      batch.set(lowerRef, {
-        ...resultPayload,
-        id: `${cleanRoll.toLowerCase()}_${semester}`,
-        studentId: cleanRoll.toLowerCase()
+    // Update CGPA on both the raw doc and standard student_ docs
+    const studentIdsToUpdate = new Set<string>([rawId, standardStudentId, pureRoll, `student_${cleanRoll}`]);
+    for (const sid of studentIdsToUpdate) {
+      const sRef = db.collection('students').doc(sid);
+      batch.set(sRef, {
+        cgpa: res.sgpa,
+        semester: semester
       }, { merge: true });
     }
-
-    // Update CGPA on both the raw doc and standard student_ doc
-    const studentRef1 = db.collection('students').doc(rawId);
-    batch.set(studentRef1, {
-      cgpa: res.sgpa,
-      semester: semester
-    }, { merge: true });
-
-    const studentRef2 = db.collection('students').doc(standardStudentId);
-    batch.set(studentRef2, {
-      cgpa: res.sgpa,
-      semester: semester
-    }, { merge: true });
   }
 
   await batch.commit();

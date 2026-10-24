@@ -19,7 +19,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/firebase';
+import { db, storage } from '@/lib/firebase';
 import {
   collection,
   doc,
@@ -34,7 +34,9 @@ import {
   updateDoc,
   arrayUnion,
   increment,
+  arrayRemove,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast } from 'sonner';
 import {
   Loader2,
@@ -53,12 +55,37 @@ import {
   X,
   Radio,
   CheckCircle2,
+  Smile,
+  Image,
+  BarChart2,
+  Calendar,
+  PlusCircle,
+  Trash2,
+  MapPin,
+  Clock,
 } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { DEPARTMENT_MAP } from '@/pages/NotificationsPage';
+import { normalizeDepartment } from '@/pages/NotificationsPage';
 import type { Community, Message, ChatPermissionType } from '@/types/firestore';
 
-const DEPT_OPTIONS = ['CS', 'IT', 'Engineering', 'Other'];
+const DEPT_OPTIONS = [
+  { label: 'Computer Science (CS)', value: 'Computer Science' },
+  { label: 'Information Technology (IT)', value: 'Information Technology' },
+  { label: 'Data Science (DS)', value: 'Data Science' },
+  { label: 'Engineering', value: 'Engineering' },
+  { label: 'Other', value: 'Other' },
+];
+
+// Emoji categories for the emoji picker
+const EMOJI_GROUPS = [
+  { label: 'Smileys', emojis: ['😀','😁','😂','🤣','😃','😄','😅','😆','😉','😊','😋','😎','😍','😘','🥰','😗','😙','😚','🙂','🤗','🤩','🤔','🤨','😐','😑','😶','🙄','😏','😣','😥','😮','🤐','😯','😪','😫','🥱','😴','😌','😛','😜','😝','🤤','😒','😓','😔','😕','🙃','🤑','😲','☹️','🙁','😖','😞','😟','😤','😢','😭','😦','😧','😨','😩','🤯','😬','😰','😱','🥵','🥶','😳','🤪','😵','😡','😠','🤬','😷','🤒','🤕','🤢','🤮','🤧','😇','🥳','🥺'] },
+  { label: 'Gestures', emojis: ['👋','🤚','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏'] },
+  { label: 'Hearts', emojis: ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☯️','🕉️','🛐','🔯','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓'] },
+  { label: 'Objects', emojis: ['📱','💻','🖥️','⌨️','🖨️','🖱️','🖲️','💾','💿','📀','📺','📷','📸','📹','🎥','📡','📠','📟','📞','☎️','🔋','🔌','💡','🔦','🕯️','🗑️','🛢️','💰','💴','💵','💶','💷','💸','💳','💎','⚖️','🔧','🔨','⚒️','🛠️','⛏️','🔩','🗜️','🔗','⛓️','🧲','🔫','💣','🔪','🗡️','⚔️','🛡️','🚬','⚰️','⚱️','🏺'] },
+  { label: 'Nature', emojis: ['🌸','🌹','🌺','🌻','🌼','🌷','🌱','🌲','🌳','🌴','🌵','🌾','🍀','🍁','🍂','🍃','🍇','🍈','🍉','🍊','🍋','🍌','🍍','🥭','🍎','🍏','🍐','🍑','🍒','🍓','🫐','🥝','🍅','🫒','🥥','🥑','🍆','🥔','🥕','🌽','🌶️','🫑','🥒','🥬','🥦','🧄','🧅','🥜','🌰'] },
+  { label: 'Study', emojis: ['📚','📖','📝','✏️','🖊️','🖋️','✒️','🖌️','🖍️','📓','📔','📒','📃','📄','📑','🗒️','📊','📈','📉','📋','📌','📍','🗂️','🗃️','🗄️','🗑️','📥','📤','📦','📫','📪','📬','📭','📮','🗳️','✂️','🗃️','📐','📏','🖇️','🗺️','🌐','🗾','🧭','⏱️','⌚','⏰','🕰️','⌛','⏳'] },
+];
+
 
 export default function CommunitiesPage(): React.ReactElement {
   const { claims, user } = useAuth();
@@ -408,7 +435,7 @@ function CreateCommunityModal({
 
   // Target Audience Selector
   const [targetAudience, setTargetAudience] = useState<'all' | 'dept'>('all');
-  const [targetDept, setTargetDept] = useState('CS');
+  const [targetDept, setTargetDept] = useState('Computer Science');
 
   // Chat Permission Type
   const [chatPermission, setChatPermission] = useState<ChatPermissionType>('one-side');
@@ -442,7 +469,7 @@ function CreateCommunityModal({
     setSubmitting(true);
     try {
       const secretCode = generateSecretCode();
-      const normalizedDept = targetAudience === 'dept' ? (DEPARTMENT_MAP[targetDept] || targetDept) : 'All';
+      const normalizedDept = targetAudience === 'dept' ? normalizeDepartment(targetDept) : 'All';
 
       const payload: Partial<Community> & Record<string, any> = {
         name: name.trim(),
@@ -594,8 +621,8 @@ function CreateCommunityModal({
                   onChange={(e) => setTargetDept(e.target.value)}
                 >
                   {DEPT_OPTIONS.map((d) => (
-                    <option key={d} value={d}>
-                      {d} ({DEPARTMENT_MAP[d] || d})
+                    <option key={d.value} value={d.value}>
+                      {d.label}
                     </option>
                   ))}
                 </select>
@@ -856,7 +883,23 @@ function JoinCommunityModal({
   );
 }
 
-// ── Chat Interface & Strict Permission Enforcement ────────────────────────────
+// ── WhatsApp-like Chat Interface with Emoji, Image, Poll, Events ────────────────────
+
+type MessageKind = 'text' | 'image' | 'poll' | 'event';
+
+interface ExtMessage extends Message {
+  kind?: MessageKind;
+  imageUrl?: string;
+  imageCaption?: string;
+  pollQuestion?: string;
+  pollOptions?: { id: string; text: string; votes: string[] }[];
+  eventTitle?: string;
+  eventDate?: string;
+  eventTime?: string;
+  eventLocation?: string;
+  eventDesc?: string;
+  reactions?: Record<string, string[]>; // emoji -> [uid]
+}
 
 interface ChatViewProps {
   community: Community;
@@ -866,6 +909,10 @@ interface ChatViewProps {
   onBack: () => void;
 }
 
+type ComposeMode = 'text' | 'image' | 'poll' | 'event';
+
+const QUICK_REACTIONS = ['👍','❤️','😂','😮','😢','🙏'];
+
 function CommunityChatView({
   community,
   currentUserUid,
@@ -873,123 +920,184 @@ function CommunityChatView({
   isFaculty,
   onBack,
 }: ChatViewProps): React.ReactElement {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ExtMessage[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [composeMode, setComposeMode] = useState<ComposeMode>('text');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [activeEmojiGroup, setActiveEmojiGroup] = useState(0);
+  const [hoveredMsgId, setHoveredMsgId] = useState<string | null>(null);
+
+  // Image upload state
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageCaption, setImageCaption] = useState('');
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Poll state
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState(['', '']);
+
+  // Event state
+  const [eventTitle, setEventTitle] = useState('');
+  const [eventDate, setEventDate] = useState('');
+  const [eventTime, setEventTime] = useState('');
+  const [eventLocation, setEventLocation] = useState('');
+  const [eventDesc, setEventDesc] = useState('');
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textInputRef = useRef<HTMLInputElement | null>(null);
 
   const isAdmin = community.ownerId === currentUserUid;
   const isOneSide = community.chatPermission === 'one-side';
-  // Strict rule: if one-side, only the admin (creator) can write messages!
   const canSendMessage = !isOneSide || isAdmin;
 
-  // Real-time message listener
+  // Real-time messages
   useEffect(() => {
     const q = query(
       collection(db, 'communities', community.id, 'messages'),
       orderBy('createdAt', 'asc')
     );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        setMessages(snap.docs.map((d) => ({ ...d.data(), id: d.id })) as Message[]);
-        setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      },
-      (err) => {
-        console.warn('Messages listener error:', err);
-      }
-    );
+    const unsub = onSnapshot(q, (snap) => {
+      setMessages(snap.docs.map((d) => ({ ...d.data(), id: d.id })) as ExtMessage[]);
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    }, (err) => console.warn('Messages listener:', err));
     return () => unsub();
   }, [community.id]);
 
-  const handleSendMessage = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault();
-    if (!text.trim() || !canSendMessage) return;
-
-    const msg = text.trim();
+  const resetCompose = () => {
     setText('');
-    setSending(true);
+    setComposeMode('text');
+    setShowEmojiPicker(false);
+    setImageFile(null);
+    setImagePreview(null);
+    setImageCaption('');
+    setPollQuestion('');
+    setPollOptions(['', '']);
+    setEventTitle(''); setEventDate(''); setEventTime(''); setEventLocation(''); setEventDesc('');
+  };
 
+  // Send text / image / poll / event
+  const handleSend = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!canSendMessage) return;
+    setSending(true);
     try {
-      const msgRef = doc(collection(db, 'communities', community.id, 'messages'));
-      await setDoc(msgRef, {
-        id: msgRef.id,
-        text: msg,
+      const base = {
         senderId: currentUserUid,
         senderName: currentUserName,
         senderRole: isAdmin ? 'Admin' : isFaculty ? 'Faculty' : 'Student',
         createdAt: serverTimestamp() as any,
         readBy: [currentUserUid],
         deleted: false,
-      });
+        reactions: {},
+      };
+
+      if (composeMode === 'text') {
+        if (!text.trim()) { setSending(false); return; }
+        const msgRef = doc(collection(db, 'communities', community.id, 'messages'));
+        await setDoc(msgRef, { id: msgRef.id, kind: 'text', text: text.trim(), ...base });
+
+      } else if (composeMode === 'image' && imageFile) {
+        // Upload image and store URL
+        let imageUrl = imagePreview || '';
+        // If Firebase Storage is configured, upload there; otherwise use base64 preview
+        try {
+          const storageRef = ref(storage, `community_images/${community.id}/${Date.now()}_${imageFile.name}`);
+          const snapshot = await uploadBytes(storageRef, imageFile);
+          imageUrl = await getDownloadURL(snapshot.ref);
+        } catch {
+          // fallback: use base64 preview directly (works without Storage rules setup)
+          imageUrl = imagePreview || '';
+        }
+        const msgRef = doc(collection(db, 'communities', community.id, 'messages'));
+        await setDoc(msgRef, { id: msgRef.id, kind: 'image', imageUrl, imageCaption, text: imageCaption || 'Photo', ...base });
+
+      } else if (composeMode === 'poll') {
+        if (!pollQuestion.trim()) { toast.error('Enter a poll question'); setSending(false); return; }
+        const opts = pollOptions.filter(o => o.trim()).map((o, i) => ({ id: String(i), text: o.trim(), votes: [] }));
+        if (opts.length < 2) { toast.error('Add at least 2 poll options'); setSending(false); return; }
+        const msgRef = doc(collection(db, 'communities', community.id, 'messages'));
+        await setDoc(msgRef, { id: msgRef.id, kind: 'poll', pollQuestion, pollOptions: opts, text: `📊 Poll: ${pollQuestion}`, ...base });
+
+      } else if (composeMode === 'event') {
+        if (!eventTitle.trim()) { toast.error('Enter event title'); setSending(false); return; }
+        const msgRef = doc(collection(db, 'communities', community.id, 'messages'));
+        await setDoc(msgRef, { id: msgRef.id, kind: 'event', eventTitle, eventDate, eventTime, eventLocation, eventDesc, text: `📅 Event: ${eventTitle}`, ...base });
+      }
+
+      resetCompose();
+      textInputRef.current?.focus();
     } catch (err: any) {
-      console.error('Send message failed:', err);
-      toast.error('Failed to post message: ' + (err.message || 'Permission denied'));
+      toast.error('Failed to send: ' + (err.message || 'Error'));
     } finally {
       setSending(false);
     }
   };
 
+  // Vote on poll
+  const handlePollVote = async (msgId: string, optId: string, currentOpts: { id: string; text: string; votes: string[] }[]) => {
+    const updatedOpts = currentOpts.map(opt => {
+      const alreadyVoted = opt.votes.includes(currentUserUid);
+      if (opt.id === optId) {
+        return { ...opt, votes: alreadyVoted ? opt.votes.filter(v => v !== currentUserUid) : [...opt.votes, currentUserUid] };
+      }
+      // Remove vote from other options (single-vote poll)
+      return { ...opt, votes: opt.votes.filter(v => v !== currentUserUid) };
+    });
+    await updateDoc(doc(db, 'communities', community.id, 'messages', msgId), { pollOptions: updatedOpts });
+  };
+
+  // React to message
+  const handleReaction = async (msgId: string, emoji: string, currentReactions: Record<string, string[]> = {}) => {
+    const uidList = currentReactions[emoji] || [];
+    const hasReacted = uidList.includes(currentUserUid);
+    await updateDoc(doc(db, 'communities', community.id, 'messages', msgId), {
+      [`reactions.${emoji}`]: hasReacted ? arrayRemove(currentUserUid) : arrayUnion(currentUserUid),
+    });
+  };
+
+  // Image file selection
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => setImagePreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+    setComposeMode('image');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey && composeMode === 'text') {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-130px)] bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm animate-fade-in">
-      {/* Chat Room Top Bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 flex-shrink-0">
+      {/* Chat Top Bar */}
+      <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-[--primary] to-indigo-600 text-white flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={onBack}
-            className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-600 transition-colors"
-            title="Back to Communities"
-          >
+          <button onClick={onBack} className="p-1.5 hover:bg-white/20 rounded-lg transition-colors" title="Back">
             <ArrowLeft className="h-5 w-5" />
           </button>
+          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center font-bold text-sm flex-shrink-0">
+            {community.name.charAt(0).toUpperCase()}
+          </div>
           <div className="min-w-0">
-            <h2 className="font-bold text-sm sm:text-base text-[--text] flex items-center gap-2 truncate">
-              <span className="p-1 bg-indigo-50 text-indigo-600 rounded">
-                <Hash className="h-4 w-4" />
-              </span>
-              {community.name}
-            </h2>
-            <div className="flex items-center gap-2 text-[11px] text-[--text-muted]">
-              <span>Admin: <strong className="text-slate-700">{community.adminName || 'Faculty'}</strong></span>
-              <span>•</span>
-              <span className="flex items-center gap-1">
-                <Users className="h-3 w-3" /> {community.memberCount || 1} members
-              </span>
-            </div>
+            <h2 className="font-bold text-sm sm:text-base truncate">{community.name}</h2>
+            <p className="text-[11px] text-white/70 truncate">
+              {community.memberCount || 1} members · {isOneSide ? 'Broadcast' : 'Group Chat'}
+            </p>
           </div>
         </div>
-
-        {/* Right Header Badges */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {/* Permission Mode Badge */}
-          <span
-            className={cn(
-              'hidden sm:flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full border',
-              isOneSide
-                ? 'bg-amber-50 text-amber-800 border-amber-200'
-                : 'bg-blue-50 text-blue-700 border-blue-200'
-            )}
-          >
-            {isOneSide ? <Radio className="h-3 w-3 text-amber-600" /> : <Users className="h-3 w-3 text-blue-600" />}
-            {isOneSide ? 'One-Side (Broadcast)' : 'Both-Side (Group)'}
-          </span>
-
-          {/* Secret Code display for Admin / Faculty */}
           {(isAdmin || isFaculty) && (
-            <div className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200 text-xs">
-              <span className="text-[10px] text-slate-500 font-medium hidden md:inline">Code:</span>
-              <span className="font-mono font-bold text-indigo-600">
-                {community.secretCode || community.inviteCode}
-              </span>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(community.secretCode || community.inviteCode || '');
-                  toast.success('Secret Code copied to clipboard!');
-                }}
-                className="hover:text-slate-800 text-slate-500"
-                title="Copy Secret Code"
-              >
+            <div className="flex items-center gap-1 bg-white/20 px-2.5 py-1 rounded-lg text-xs">
+              <span className="font-mono font-bold text-yellow-200">{community.secretCode || community.inviteCode}</span>
+              <button onClick={() => { navigator.clipboard.writeText(community.secretCode || community.inviteCode || ''); toast.success('Code copied!'); }} className="hover:text-yellow-200">
                 <Copy className="h-3.5 w-3.5" />
               </button>
             </div>
@@ -997,53 +1105,160 @@ function CommunityChatView({
         </div>
       </div>
 
-      {/* Messages Scrollable Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 bg-slate-50/60">
+      {/* Messages Area */}
+      <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-3 bg-[#f0f2f5]">
         {messages.length === 0 ? (
-          <div className="text-center py-20 text-xs text-[--text-muted]">
-            <MessageSquare className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-            <p className="font-semibold text-slate-600">No messages yet in this community.</p>
-            <p className="text-[11px] mt-0.5">
-              {isOneSide
-                ? 'The admin will broadcast important announcements here.'
-                : 'Start the conversation with your classmates and faculty!'}
-            </p>
+          <div className="text-center py-20">
+            <MessageSquare className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+            <p className="font-semibold text-slate-500 text-sm">No messages yet</p>
+            <p className="text-xs text-slate-400 mt-1">{isOneSide ? 'The admin will broadcast announcements here.' : 'Start the conversation!'}</p>
           </div>
         ) : (
           messages.map((msg) => {
             const isMine = msg.senderId === currentUserUid;
+            const reactions = (msg as any).reactions || {};
+            const totalReactions = Object.values(reactions).reduce((s: number, arr) => s + (arr as string[]).length, 0);
 
             return (
               <div
                 key={msg.id}
-                className={cn('flex flex-col max-w-[80%] sm:max-w-[70%]', isMine ? 'ml-auto items-end' : 'mr-auto items-start')}
+                className={cn('flex flex-col max-w-[82%] sm:max-w-[70%]', isMine ? 'ml-auto items-end' : 'mr-auto items-start')}
+                onMouseEnter={() => setHoveredMsgId(msg.id)}
+                onMouseLeave={() => setHoveredMsgId(null)}
               >
-                <div className="flex items-baseline gap-2 mb-1 px-1">
-                  <span className="text-xs font-bold text-slate-700">
-                    {isMine ? 'You' : msg.senderName}
-                  </span>
-                  {(msg as any).senderRole && (
-                    <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-slate-200 text-slate-600">
-                      {(msg as any).senderRole}
-                    </span>
+                {/* Sender name */}
+                {!isMine && (
+                  <span className="text-[11px] font-bold text-indigo-600 mb-0.5 px-1">{msg.senderName}</span>
+                )}
+
+                {/* Message bubble */}
+                <div className={cn(
+                  'relative rounded-2xl shadow-sm overflow-hidden',
+                  isMine ? 'bg-[--primary] text-white rounded-tr-sm' : 'bg-white text-slate-800 rounded-tl-sm border border-slate-200/80'
+                )}>
+                  {/* Image message */}
+                  {msg.kind === 'image' && (msg as any).imageUrl && (
+                    <div>
+                      <img src={(msg as any).imageUrl} alt="Shared" className="max-w-[280px] max-h-[200px] object-cover w-full" />
+                      {(msg as any).imageCaption && (
+                        <p className={cn('text-xs px-3 py-1.5', isMine ? 'text-white/90' : 'text-slate-600')}>{(msg as any).imageCaption}</p>
+                      )}
+                    </div>
                   )}
-                  <span className="text-[10px] text-slate-400">
-                    {msg.createdAt?.toDate
-                      ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                      : ''}
-                  </span>
+
+                  {/* Poll message */}
+                  {msg.kind === 'poll' && (msg as any).pollOptions && (
+                    <div className="p-3 min-w-[220px] max-w-[300px]">
+                      <p className={cn('font-bold text-sm mb-3 flex items-center gap-1.5', isMine ? 'text-white' : 'text-slate-800')}>
+                        <BarChart2 className="h-4 w-4" />
+                        {(msg as any).pollQuestion}
+                      </p>
+                      <div className="space-y-2">
+                        {((msg as any).pollOptions as { id: string; text: string; votes: string[] }[]).map(opt => {
+                          const totalVotes = ((msg as any).pollOptions as any[]).reduce((s: number, o: any) => s + o.votes.length, 0);
+                          const pct = totalVotes > 0 ? Math.round((opt.votes.length / totalVotes) * 100) : 0;
+                          const voted = opt.votes.includes(currentUserUid);
+                          return (
+                            <button
+                              key={opt.id}
+                              onClick={() => handlePollVote(msg.id, opt.id, (msg as any).pollOptions)}
+                              className={cn(
+                                'w-full text-left rounded-lg overflow-hidden border transition-all relative',
+                                voted ? 'border-indigo-400' : 'border-slate-200',
+                                'bg-white/10'
+                              )}
+                            >
+                              <div
+                                className={cn('absolute inset-y-0 left-0 transition-all', voted ? 'bg-indigo-500/30' : 'bg-slate-100/50')}
+                                style={{ width: `${pct}%` }}
+                              />
+                              <div className="relative flex items-center justify-between px-2.5 py-1.5">
+                                <span className={cn('text-xs font-medium', isMine ? 'text-white' : 'text-slate-700')}>{opt.text}</span>
+                                <span className={cn('text-[10px] font-bold', isMine ? 'text-white/70' : 'text-slate-500')}>{pct}%</span>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className={cn('text-[10px] mt-2', isMine ? 'text-white/60' : 'text-slate-400')}>
+                        {((msg as any).pollOptions as any[]).reduce((s: number, o: any) => s + o.votes.length, 0)} votes
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Event message */}
+                  {msg.kind === 'event' && (
+                    <div className="p-3 min-w-[220px] max-w-[300px]">
+                      <div className={cn('flex items-center gap-2 mb-2', isMine ? 'text-white' : 'text-indigo-600')}>
+                        <Calendar className="h-4 w-4" />
+                        <span className="font-bold text-sm">{(msg as any).eventTitle}</span>
+                      </div>
+                      {(msg as any).eventDate && (
+                        <p className={cn('text-xs flex items-center gap-1.5 mt-1', isMine ? 'text-white/80' : 'text-slate-600')}>
+                          <Clock className="h-3 w-3" />
+                          {(msg as any).eventDate}{(msg as any).eventTime ? ` at ${(msg as any).eventTime}` : ''}
+                        </p>
+                      )}
+                      {(msg as any).eventLocation && (
+                        <p className={cn('text-xs flex items-center gap-1.5 mt-1', isMine ? 'text-white/80' : 'text-slate-600')}>
+                          <MapPin className="h-3 w-3" />
+                          {(msg as any).eventLocation}
+                        </p>
+                      )}
+                      {(msg as any).eventDesc && (
+                        <p className={cn('text-xs mt-2 leading-relaxed', isMine ? 'text-white/70' : 'text-slate-500')}>{(msg as any).eventDesc}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Regular text message */}
+                  {(msg.kind === 'text' || !msg.kind) && msg.text && (
+                    <p className={cn('text-xs sm:text-sm leading-relaxed whitespace-pre-wrap px-3.5 py-2.5', isMine ? 'text-white' : 'text-slate-800')}>
+                      {msg.text}
+                    </p>
+                  )}
+
+                  {/* Timestamp */}
+                  <p className={cn('text-[10px] px-3 pb-1.5 text-right', isMine ? 'text-white/50' : 'text-slate-400')}>
+                    {msg.createdAt?.toDate ? msg.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                  </p>
                 </div>
 
-                <div
-                  className={cn(
-                    'px-4 py-2.5 rounded-2xl text-xs sm:text-sm leading-relaxed shadow-xs whitespace-pre-wrap',
-                    isMine
-                      ? 'bg-[--primary] text-white rounded-tr-xs'
-                      : 'bg-white border border-slate-200 text-slate-800 rounded-tl-xs'
-                  )}
-                >
-                  {msg.text}
-                </div>
+                {/* Reactions display */}
+                {totalReactions > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1 px-1">
+                    {Object.entries(reactions).filter(([, arr]) => (arr as string[]).length > 0).map(([emoji, arr]) => (
+                      <button
+                        key={emoji}
+                        onClick={() => handleReaction(msg.id, emoji, reactions)}
+                        className={cn(
+                          'flex items-center gap-0.5 text-[11px] px-1.5 py-0.5 rounded-full border transition-all',
+                          (arr as string[]).includes(currentUserUid)
+                            ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                            : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                        )}
+                      >
+                        {emoji} <span className="font-semibold">{(arr as string[]).length}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Quick Reaction Bar (on hover) */}
+                {hoveredMsgId === msg.id && (
+                  <div className={cn('flex gap-1 mt-1 px-1', isMine ? 'justify-end' : 'justify-start')}>
+                    {QUICK_REACTIONS.map(emoji => (
+                      <button
+                        key={emoji}
+                        onClick={() => handleReaction(msg.id, emoji, reactions)}
+                        className="text-base hover:scale-125 transition-transform p-0.5 rounded-full hover:bg-white/80"
+                        title={`React with ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })
@@ -1051,38 +1266,179 @@ function CommunityChatView({
         <div ref={bottomRef} />
       </div>
 
-      {/* Bottom Message Input / Broadcast Lock Banner */}
-      <div className="p-3 sm:p-4 bg-white border-t border-slate-200 flex-shrink-0">
-        {canSendMessage ? (
-          <form onSubmit={handleSendMessage} className="flex items-center gap-2">
+      {/* Compose Area */}
+      {canSendMessage ? (
+        <div className="flex-shrink-0 bg-white border-t border-slate-200">
+
+          {/* Compose Mode panels */}
+          {composeMode === 'image' && imagePreview && (
+            <div className="p-3 bg-slate-50 border-b border-slate-200">
+              <div className="flex items-start gap-3">
+                <img src={imagePreview} alt="Preview" className="w-20 h-20 object-cover rounded-xl border border-slate-200" />
+                <div className="flex-1">
+                  <p className="text-xs font-semibold text-slate-700 mb-1">Photo Preview</p>
+                  <input
+                    type="text"
+                    placeholder="Add a caption..."
+                    value={imageCaption}
+                    onChange={e => setImageCaption(e.target.value)}
+                    className="input text-xs py-1.5 w-full"
+                  />
+                </div>
+                <button onClick={resetCompose} className="p-1 text-slate-400 hover:text-red-500"><X className="h-4 w-4" /></button>
+              </div>
+            </div>
+          )}
+
+          {composeMode === 'poll' && (
+            <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><BarChart2 className="h-3.5 w-3.5 text-indigo-600" /> Create Poll</p>
+                <button onClick={resetCompose} className="p-1 text-slate-400 hover:text-red-500"><X className="h-4 w-4" /></button>
+              </div>
+              <input type="text" placeholder="Poll question..." value={pollQuestion} onChange={e => setPollQuestion(e.target.value)} className="input text-xs py-1.5 w-full" />
+              <div className="space-y-1.5">
+                {pollOptions.map((opt, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder={`Option ${i + 1}...`}
+                      value={opt}
+                      onChange={e => setPollOptions(prev => prev.map((p, j) => j === i ? e.target.value : p))}
+                      className="input text-xs py-1.5 flex-1"
+                    />
+                    {pollOptions.length > 2 && (
+                      <button onClick={() => setPollOptions(prev => prev.filter((_, j) => j !== i))} className="p-1 text-red-400 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
+                    )}
+                  </div>
+                ))}
+                {pollOptions.length < 6 && (
+                  <button onClick={() => setPollOptions(prev => [...prev, ''])} className="text-[11px] text-indigo-600 font-semibold flex items-center gap-1 hover:text-indigo-800">
+                    <PlusCircle className="h-3.5 w-3.5" /> Add option
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {composeMode === 'event' && (
+            <div className="p-3 bg-slate-50 border-b border-slate-200 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5 text-green-600" /> Create Event</p>
+                <button onClick={resetCompose} className="p-1 text-slate-400 hover:text-red-500"><X className="h-4 w-4" /></button>
+              </div>
+              <input type="text" placeholder="Event title *" value={eventTitle} onChange={e => setEventTitle(e.target.value)} className="input text-xs py-1.5 w-full" />
+              <div className="grid grid-cols-2 gap-2">
+                <input type="date" value={eventDate} onChange={e => setEventDate(e.target.value)} className="input text-xs py-1.5" />
+                <input type="time" value={eventTime} onChange={e => setEventTime(e.target.value)} className="input text-xs py-1.5" />
+              </div>
+              <input type="text" placeholder="Location (optional)" value={eventLocation} onChange={e => setEventLocation(e.target.value)} className="input text-xs py-1.5 w-full" />
+              <textarea placeholder="Description (optional)" value={eventDesc} onChange={e => setEventDesc(e.target.value)} rows={2} className="input text-xs py-1.5 w-full resize-none" />
+            </div>
+          )}
+
+          {/* Emoji Picker */}
+          {showEmojiPicker && (
+            <div className="bg-white border-t border-slate-200 shadow-lg" style={{ maxHeight: 240, overflow: 'hidden' }}>
+              {/* Emoji Group Tabs */}
+              <div className="flex gap-1 px-3 pt-2 border-b border-slate-100 overflow-x-auto pb-1">
+                {EMOJI_GROUPS.map((g, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setActiveEmojiGroup(i)}
+                    className={cn('text-xs px-2.5 py-1 rounded-full font-medium whitespace-nowrap transition-all',
+                      activeEmojiGroup === i ? 'bg-[--primary] text-white' : 'text-slate-500 hover:bg-slate-100'
+                    )}
+                  >
+                    {g.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-0.5 p-3 overflow-y-auto" style={{ maxHeight: 170 }}>
+                {EMOJI_GROUPS[activeEmojiGroup].emojis.map((emoji, i) => (
+                  <button
+                    key={i}
+                    onClick={() => { setText(prev => prev + emoji); setShowEmojiPicker(false); textInputRef.current?.focus(); }}
+                    className="text-xl hover:bg-slate-100 rounded p-1 transition-colors"
+                    title={emoji}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Main Input Bar */}
+          <div className="flex items-center gap-2 px-3 py-2.5">
+            {/* Hidden image input */}
+            <input type="file" accept="image/*" className="hidden" ref={imageInputRef} onChange={handleImageSelect} />
+
+            {/* Attachment tools */}
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => { setShowEmojiPicker(prev => !prev); setComposeMode('text'); }}
+                title="Emoji"
+                className="p-2 rounded-full hover:bg-slate-100 text-slate-500 hover:text-amber-500 transition-colors"
+              >
+                <Smile className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                title="Photo"
+                className="p-2 rounded-full hover:bg-slate-100 text-slate-500 hover:text-green-500 transition-colors"
+              >
+                <Image className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => { setComposeMode(prev => prev === 'poll' ? 'text' : 'poll'); setShowEmojiPicker(false); }}
+                title="Create Poll"
+                className={cn('p-2 rounded-full transition-colors', composeMode === 'poll' ? 'bg-indigo-100 text-indigo-600' : 'hover:bg-slate-100 text-slate-500 hover:text-indigo-500')}
+              >
+                <BarChart2 className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => { setComposeMode(prev => prev === 'event' ? 'text' : 'event'); setShowEmojiPicker(false); }}
+                title="Create Event"
+                className={cn('p-2 rounded-full transition-colors', composeMode === 'event' ? 'bg-green-100 text-green-600' : 'hover:bg-slate-100 text-slate-500 hover:text-green-500')}
+              >
+                <Calendar className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Text input */}
             <input
+              ref={textInputRef}
               type="text"
-              placeholder={isOneSide ? 'Broadcast an announcement as Admin...' : 'Type a message to the group...'}
-              className="input flex-1 rounded-full px-5 h-11 text-xs sm:text-sm"
+              placeholder={composeMode === 'text' ? (isOneSide ? 'Broadcast to group...' : 'Type a message...') : `Ready to send ${composeMode}...`}
+              className="flex-1 bg-slate-100 rounded-full px-4 py-2.5 text-sm outline-none focus:bg-white focus:ring-2 focus:ring-indigo-300 transition-all border border-transparent focus:border-indigo-300"
               value={text}
-              onChange={(e) => setText(e.target.value)}
-              disabled={sending}
+              onChange={e => { setText(e.target.value); if (composeMode !== 'text') setComposeMode('text'); }}
+              onKeyDown={handleKeyDown}
+              disabled={sending || (composeMode !== 'text')}
             />
+
+            {/* Send Button */}
             <button
-              type="submit"
-              disabled={!text.trim() || sending}
-              className="btn-primary rounded-full h-11 w-11 p-0 flex items-center justify-center flex-shrink-0 disabled:opacity-50"
-              title="Send Message"
+              type="button"
+              onClick={() => handleSend()}
+              disabled={sending || (composeMode === 'text' && !text.trim()) || (composeMode === 'image' && !imageFile) || (composeMode === 'poll' && !pollQuestion.trim()) || (composeMode === 'event' && !eventTitle.trim())}
+              className="btn-primary rounded-full h-11 w-11 p-0 flex items-center justify-center flex-shrink-0 disabled:opacity-50 bg-gradient-to-br from-[--primary] to-indigo-600 shadow-md hover:shadow-lg transition-shadow"
             >
               {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </button>
-          </form>
-        ) : (
-          /* Strictly enforce One-side chat: Disable message input for non-admins */
-          <div className="flex items-center justify-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 font-medium text-center">
-            <Lock className="h-4 w-4 text-amber-600 flex-shrink-0" />
-            <span>
-              <strong>Broadcast Channel:</strong> Only the Community Admin (
-              {community.adminName || 'Faculty'}) can write messages in this group.
-            </span>
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="p-4 bg-amber-50 border-t border-amber-200 flex items-center justify-center gap-2 text-xs text-amber-800 font-medium">
+          <Lock className="h-4 w-4 text-amber-600 flex-shrink-0" />
+          <span><strong>Broadcast Channel:</strong> Only the Admin ({community.adminName || 'Faculty'}) can write messages.</span>
+        </div>
+      )}
     </div>
   );
 }

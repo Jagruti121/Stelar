@@ -4,6 +4,7 @@ import { db } from '@/lib/firebase';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { Loader2, Award, BookOpen, Search, UserCheck, GraduationCap, CheckCircle2, AlertCircle } from 'lucide-react';
 import type { Result } from '@/types/firestore';
+import { normalizeDepartment } from '@/pages/NotificationsPage';
 
 export default function ResultsPage(): React.ReactElement {
   const { user, claims } = useAuth();
@@ -108,13 +109,29 @@ export default function ResultsPage(): React.ReactElement {
 
     async function loadResults() {
       const rollClean = activeRoll.trim();
-      const candidates = [
+      const candidatesSet = new Set<string>([
         rollClean,
         rollClean.toLowerCase(),
         rollClean.toUpperCase(),
         `student_${rollClean.toUpperCase()}`,
         `student_${rollClean.toLowerCase()}`
-      ];
+      ]);
+      if (claims?.studentId) {
+        candidatesSet.add(claims.studentId);
+        candidatesSet.add(claims.studentId.toLowerCase());
+        candidatesSet.add(claims.studentId.toUpperCase());
+        const stripped = claims.studentId.replace(/^student_/i, '');
+        candidatesSet.add(stripped);
+        candidatesSet.add(stripped.toLowerCase());
+      }
+      const depts = [(claims?.deptId || 'cs'), 'cs', 'cse', 'it', 'ds'].map(d => d.toLowerCase());
+      for (const d of depts) {
+        for (let s = 1; s <= 8; s++) {
+          candidatesSet.add(`${d}_sem${s}_diva_${rollClean.toLowerCase()}`);
+          candidatesSet.add(`${d}_sem${s}_divb_${rollClean.toLowerCase()}`);
+        }
+      }
+      const candidates = Array.from(candidatesSet);
 
       // FIX 1: Resolve the student name for the new activeRoll from Firestore
       try {
@@ -126,7 +143,7 @@ export default function ResultsPage(): React.ReactElement {
           setStudentInfo({
             name: data.name || undefined,
             rollNo: data.rollNo || rollClean,
-            department: data.department || data.deptId || undefined,
+            department: data.department ? normalizeDepartment(data.department) : (data.deptId ? normalizeDepartment(data.deptId) : undefined),
             year: data.year ? `${data.year} Year` : undefined,
           });
         } else {
@@ -139,7 +156,7 @@ export default function ResultsPage(): React.ReactElement {
                 setStudentInfo({
                   name: data.name || undefined,
                   rollNo: data.rollNo || rollClean,
-                  department: data.department || data.deptId || undefined,
+                  department: data.department ? normalizeDepartment(data.department) : (data.deptId ? normalizeDepartment(data.deptId) : undefined),
                   year: data.year ? `${data.year} Year` : undefined,
                 });
                 break;
@@ -199,13 +216,27 @@ export default function ResultsPage(): React.ReactElement {
 
     async function fetchForSemester() {
       const rollClean = activeRoll.trim();
-      const candidates = [
+      const candidatesSet = new Set<string>([
         rollClean,
         rollClean.toLowerCase(),
         rollClean.toUpperCase(),
         `student_${rollClean.toUpperCase()}`,
         `student_${rollClean.toLowerCase()}`
-      ];
+      ]);
+      if (claims?.studentId) {
+        candidatesSet.add(claims.studentId);
+        candidatesSet.add(claims.studentId.toLowerCase());
+        candidatesSet.add(claims.studentId.toUpperCase());
+        const stripped = claims.studentId.replace(/^student_/i, '');
+        candidatesSet.add(stripped);
+        candidatesSet.add(stripped.toLowerCase());
+      }
+      const depts = [(claims?.deptId || 'cs'), 'cs', 'cse', 'it', 'ds'].map(d => d.toLowerCase());
+      for (const d of depts) {
+        candidatesSet.add(`${d}_sem${semester}_diva_${rollClean.toLowerCase()}`);
+        candidatesSet.add(`${d}_sem${semester}_divb_${rollClean.toLowerCase()}`);
+      }
+      const candidates = Array.from(candidatesSet);
 
       let matchedResult: Result | null = null;
       for (const cand of candidates) {
