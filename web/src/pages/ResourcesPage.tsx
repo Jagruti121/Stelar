@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db, storage } from '@/lib/firebase';
 import {
-  collection, addDoc, getDocs, onSnapshot, query,
-  where, serverTimestamp, orderBy
+  collection, addDoc, getDocs, getDoc, doc, onSnapshot, query,
+  where, serverTimestamp, orderBy, limit
 } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { toast } from 'sonner';
@@ -44,9 +44,27 @@ interface FileNode {
   uploadedAt: any;
 }
 
-const DEPT_OPTIONS = ['Computer Science', 'Information Technology', 'Engineering', 'Other'];
-const YEAR_OPTIONS = ['First Year', 'Second Year', 'Third Year'];
-const DIVISION_OPTIONS = ['A', 'B', 'C', 'D'];
+export const DEPT_OPTIONS = ['Computer Science', 'Information Technology', 'Engineering', 'Other'];
+export const YEAR_OPTIONS = ['First Year', 'Second Year', 'Third Year', 'Final Year'];
+export const DIVISION_OPTIONS = ['A', 'B', 'C', 'D'];
+
+export const normalizeDept = (raw: string): string => {
+  const s = (raw || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (['cs', 'cse', 'computerscience', 'compsci'].includes(s)) return 'Computer Science';
+  if (['it', 'informationtechnology', 'infotech'].includes(s)) return 'Information Technology';
+  if (['ds', 'datascience', 'datasci'].includes(s)) return 'Data Science';
+  if (['eng', 'engineering'].includes(s)) return 'Engineering';
+  return 'Other';
+};
+
+export const normalizeYear = (raw: string): string => {
+  const s = (raw || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (['1', 'first', 'firstyear', 'fe', '1st', '1styear'].includes(s)) return 'First Year';
+  if (['2', 'second', 'secondyear', 'se', '2nd', '2ndyear'].includes(s)) return 'Second Year';
+  if (['3', 'third', 'thirdyear', 'te', '3rd', '3rdyear'].includes(s)) return 'Third Year';
+  if (['4', 'final', 'fourth', 'finalyear', 'fourthyear', 'be', '4th', '4thyear'].includes(s)) return 'Final Year';
+  return 'First Year';
+};
 
 // ── Root: role-aware entry point ──────────────────────────────────────────────
 
@@ -56,60 +74,113 @@ export function ResourcesPage(): React.ReactElement {
   const isStudent = claims?.roles.includes('STUDENT');
 
   if (isFaculty) return <FacultyResourcesPage />;
-  if (isStudent) return <StudentResourcesPage claims={claims} />;
+  if (isStudent) return <StudentResourcesPage />;
   return <div className="card p-8 text-center text-[--text-muted]">Unauthorized</div>;
 }
 
 // ── Student View: auto-joined classrooms ──────────────────────────────────────
 
-function StudentResourcesPage({ claims }: { claims: any }) {
+function StudentResourcesPage() {
+  const { user, claims } = useAuth();
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [loading, setLoading] = useState(true);
   const [openClassroom, setOpenClassroom] = useState<Classroom | null>(null);
+  const [studentTag, setStudentTag] = useState<{ dept: string; division: string; year: string } | null>(null);
 
-  // Auto-join: query classrooms matching student's dept/division/year
+  // Auto-join: query classrooms strictly matching student's department/division/year
   useEffect(() => {
-    if (!claims) return;
+    let isMounted = true;
+    let unsubClassrooms: (() => void) | null = null;
 
     async function loadMatchingClassrooms() {
       try {
-        // Normalize department to canonical name (matches what faculty saves)
-        const normalizeDept = (raw: string): string => {
-          const s = (raw || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-          if (['cs', 'cse', 'computerscience', 'compsci'].includes(s)) return 'Computer Science';
-          if (['it', 'informationtechnology', 'infotech'].includes(s)) return 'Information Technology';
-          if (['ds', 'datascience', 'datasci'].includes(s)) return 'Data Science';
-          if (['eng', 'engineering'].includes(s)) return 'Engineering';
-          return 'Other';
-        };
+        let rawDept = claims?.deptId || (claims as any)?.department || '';
+        let rawDiv = claims?.division || '';
+        let rawYear = claims?.year || '';
 
-        const rawDept = claims?.deptId || claims?.department || '';
+        // 1. Authoritative check: fetch student document from Firestore
+        let docData: any = null;
+        if (claims?.studentId) {
+          try {
+            const sSnap = await getDoc(doc(db, 'students', claims.studentId));
+            if (sSnap.exists()) docData = sSnap.data();
+          } catch (e) {
+            console.warn('Could not fetch student by claims.studentId:', e);
+          }
+        }
+
+        if (!docData && user?.uid) {
+          try {
+            const sSnap = await getDoc(doc(db, 'students', user.uid));
+            if (sSnap.exists()) {
+              docData = sSnap.data();
+            } else {
+              const qSnap = await getDocs(query(collection(db, 'students'), where('authUid', '==', user.uid), limit(1)));
+              if (!qSnap.empty) docData = qSnap.docs[0].data();
+            }
+          } catch (e) {
+            console.warn('Could not fetch student by authUid:', e);
+          }
+        }
+
+        if (docData) {
+          rawDept = docData.department || docData.deptId || rawDept;
+          rawDiv = docData.division || rawDiv;
+          rawYear = docData.year || rawYear;
+        }
+
+        // 2. Fallback to localStorage cached roles if year is still not resolved
+        if (!rawYear) {
+          try {
+            const cached = JSON.parse(localStorage.getItem('stellar_local_roles') || '{}');
+            if (cached.year) rawYear = cached.year;
+            if (!rawDept && cached.deptId) rawDept = cached.deptId;
+            if (!rawDiv && cached.division) rawDiv = cached.division;
+          } catch {}
+        }
+
         const studentDept = normalizeDept(rawDept);
-        const studentDiv = (claims?.division || 'A').toUpperCase();
-        let studentYear = claims?.year || 'First Year';
-        if (studentYear === 'First') studentYear = 'First Year';
-        if (studentYear === 'Second') studentYear = 'Second Year';
-        if (studentYear === 'Third') studentYear = 'Third Year';
+        const studentDiv = (rawDiv || 'A').toString().trim().toUpperCase();
+        const studentYear = normalizeYear(rawYear);
 
-        // Query matching student's authenticated profile data (department, division, year)
+        if (isMounted) {
+          setStudentTag({ dept: studentDept, division: studentDiv, year: studentYear });
+        }
+
+        // 3. Query classrooms strictly matching student's department, division, and year
         const q = query(
           collection(db, 'classrooms'),
           where('department', '==', studentDept),
           where('division', '==', studentDiv),
           where('year', '==', studentYear)
         );
-        const snap = await getDocs(q);
-        const matched: Classroom[] = snap.docs.map(d => ({ id: d.id, ...d.data() } as Classroom));
-        setClassrooms(matched);
+
+        unsubClassrooms = onSnapshot(
+          q,
+          (snap) => {
+            if (!isMounted) return;
+            const matched: Classroom[] = snap.docs.map(d => ({ id: d.id, ...d.data() } as Classroom));
+            setClassrooms(matched);
+            setLoading(false);
+          },
+          (err) => {
+            console.warn('Failed to listen to classrooms:', err);
+            if (isMounted) setLoading(false);
+          }
+        );
       } catch (e) {
         console.warn('Failed to load classrooms:', e);
-      } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
 
     loadMatchingClassrooms();
-  }, [claims]);
+
+    return () => {
+      isMounted = false;
+      if (unsubClassrooms) unsubClassrooms();
+    };
+  }, [claims, user?.uid]);
 
   if (loading) return <div className="flex justify-center p-10"><Loader2 className="h-6 w-6 animate-spin text-[--primary]" /></div>;
 
@@ -133,6 +204,14 @@ function StudentResourcesPage({ claims }: { claims: any }) {
         <p className="text-sm text-[--text-muted] mt-1">
           Classrooms you are enrolled in based on your department, division, and year.
         </p>
+        {studentTag && (
+          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+            <span className="text-xs text-[--text-muted] font-medium">Your Profile:</span>
+            <span className="badge-primary text-xs">{studentTag.dept}</span>
+            <span className="badge text-xs bg-slate-100 text-slate-700 font-semibold">Division {studentTag.division}</span>
+            <span className="badge text-xs bg-blue-50 text-blue-700 font-semibold">{studentTag.year}</span>
+          </div>
+        )}
       </div>
 
       {classrooms.length === 0 ? (

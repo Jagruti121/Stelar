@@ -211,26 +211,29 @@ service cloud.firestore {
       }
 
       match /messages/{msgId} {
-        allow read: if isAuthed()
-          && (
-            exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid))
-            || get(/databases/$(database)/documents/communities/$(communityId)).data.get('members', []).hasAny([request.auth.uid])
-            || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid
-          );
+        allow read: if isAuthed();
         allow create: if isAuthed()
-          && (
-            exists(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid))
-            || get(/databases/$(database)/documents/communities/$(communityId)).data.get('members', []).hasAny([request.auth.uid])
-            || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid
-          )
           && request.resource.data.senderId == request.auth.uid
           && (
             // If one-side chat (broadcast), only admin/owner can post messages!
             get(/databases/$(database)/documents/communities/$(communityId)).data.get('chatPermission', 'both-side') != 'one-side'
             || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid
+            || isFaculty()
           );
-        allow update: if false;
-        allow delete: if false;
+        allow update: if isAuthed()
+          && (
+            // Allow poll voting and reactions
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pollOptions', 'reactions'])
+            // Or message author / owner / faculty
+            || resource.data.senderId == request.auth.uid
+            || isFaculty()
+          );
+        allow delete: if isAuthed()
+          && (
+            resource.data.senderId == request.auth.uid
+            || isFaculty()
+            || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerId == request.auth.uid
+          );
       }
     }
 
@@ -258,65 +261,10 @@ service cloud.firestore {
       }
     }
 
-    /// Checks if a student document matches the classroom target.
-    function studentDocMatches(c, s) {
-      let sDept = s.get('department', s.get('deptId', ''));
-      let sDiv = s.get('division', '');
-      let sYr = s.get('year', '');
-      let cDept = c.get('department', '');
-      let cDiv = c.get('division', '');
-      let cYr = c.get('year', '');
-      let deptOk = cDept == 'ALL'
-        || cDept == sDept
-        // classroom stored as old abbreviated name
-        || (cDept == 'CS' && (sDept in ['cse', 'cs', 'CS', 'Computer Science', 'computer science']))
-        || (cDept == 'IT' && (sDept in ['it', 'IT', 'Information Technology', 'information technology']))
-        // classroom stored as canonical full name (new format)
-        || (cDept == 'Computer Science' && (sDept in ['cs', 'CS', 'cse', 'CSE', 'Computer Science', 'computer science', 'compsci']))
-        || (cDept == 'Information Technology' && (sDept in ['it', 'IT', 'Information Technology', 'information technology', 'infotech']))
-        || (cDept == 'Data Science' && (sDept in ['ds', 'DS', 'Data Science', 'data science', 'datasci']))
-        || (cDept == 'Engineering' && (sDept in ['eng', 'ENG', 'Engineering', 'engineering']));
-      return deptOk
-          && (cDiv == 'ALL' || cDiv == sDiv)
-          && (cYr == 'ALL' || cYr == sYr || (cYr == 'First Year' && (sYr in ['First', '1', 'First Year'])) || (cYr == 'Second Year' && (sYr in ['Second', '2', 'Second Year'])) || (cYr == 'Third Year' && (sYr in ['Third', '3', 'Third Year'])));
-    }
-
-    /// Checks if a student's profile data (claims or students document) matches the classroom target.
-    function studentMatchesClassroom(c) {
-      let dept = request.auth.token.get('deptId', request.auth.token.get('department', ''));
-      let div = request.auth.token.get('division', '');
-      let yr = request.auth.token.get('year', '');
-
-      let cDept = c.get('department', '');
-      let cDiv = c.get('division', '');
-      let cYr = c.get('year', '');
-
-      let deptOk = cDept == 'ALL' || cDept == dept
-        // classroom stored as old abbreviated name
-        || (cDept == 'CS' && (dept in ['cse', 'cs', 'CS', 'computer science', 'Computer Science']))
-        || (cDept == 'IT' && (dept in ['it', 'IT', 'information technology', 'Information Technology']))
-        // classroom stored as canonical full name (new format)
-        || (cDept == 'Computer Science' && (dept in ['cs', 'CS', 'cse', 'CSE', 'Computer Science', 'computer science', 'compsci']))
-        || (cDept == 'Information Technology' && (dept in ['it', 'IT', 'Information Technology', 'information technology', 'infotech']))
-        || (cDept == 'Data Science' && (dept in ['ds', 'DS', 'Data Science', 'data science', 'datasci']))
-        || (cDept == 'Engineering' && (dept in ['eng', 'ENG', 'Engineering', 'engineering']));
-
-      let divOk = cDiv == 'ALL' || cDiv == div;
-
-      let yrOk = cYr == 'ALL' || cYr == yr
-        || (cYr == 'First Year' && (yr in ['First', '1', 'First Year', '']))
-        || (cYr == 'Second Year' && (yr in ['Second', '2', 'Second Year']))
-        || (cYr == 'Third Year' && (yr in ['Third', '3', 'Third Year']));
-
-      return (deptOk && divOk && yrOk)
-        || (exists(/databases/$(database)/documents/students/$(request.auth.uid))
-            && studentDocMatches(c, get(/databases/$(database)/documents/students/$(request.auth.uid)).data));
-    }
 
     // ── classrooms ───────────────────────────────────────────
     match /classrooms/{classroomId} {
-      allow read: if isFaculty()
-        || (isStudent() && studentMatchesClassroom(resource.data));
+      allow read: if isFaculty() || isAuthed();
       allow create, write: if isAuthed() && isFaculty()
         && (request.resource == null || request.resource.data.createdBy == request.auth.uid);
     }

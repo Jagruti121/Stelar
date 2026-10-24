@@ -1039,10 +1039,15 @@ function CommunityChatView({
 
   // Vote on poll — uses a Firestore transaction to avoid race conditions
   const handlePollVote = async (msgId: string, optId: string) => {
+    if (!currentUserUid) {
+      toast.error('Please log in to vote.');
+      return;
+    }
     if (votingOptId) return; // prevent double-click
     setVotingOptId(optId);
     try {
       const msgRef = doc(db, 'communities', community.id, 'messages', msgId);
+      let voteAdded = false;
       await runTransaction(db, async (tx) => {
         const snap = await tx.get(msgRef);
         if (!snap.exists()) throw new Error('Message not found');
@@ -1050,22 +1055,25 @@ function CommunityChatView({
         const opts: { id: string; text: string; votes: string[] }[] = data.pollOptions || [];
 
         const updatedOpts = opts.map(opt => {
-          const alreadyVoted = opt.votes.includes(currentUserUid);
+          const votes = Array.isArray(opt.votes) ? opt.votes : [];
+          const alreadyVoted = votes.includes(currentUserUid);
           if (opt.id === optId) {
+            voteAdded = !alreadyVoted;
             // Toggle: remove if already voted, add if not
             return {
               ...opt,
               votes: alreadyVoted
-                ? opt.votes.filter(v => v !== currentUserUid)
-                : [...opt.votes, currentUserUid],
+                ? votes.filter(v => v !== currentUserUid)
+                : [...votes, currentUserUid],
             };
           }
           // Single-vote: remove from all other options
-          return { ...opt, votes: opt.votes.filter(v => v !== currentUserUid) };
+          return { ...opt, votes: votes.filter(v => v !== currentUserUid) };
         });
 
         tx.update(msgRef, { pollOptions: updatedOpts });
       });
+      toast.success(voteAdded ? 'Vote recorded!' : 'Vote removed');
     } catch (err: any) {
       console.error('Vote error:', err);
       toast.error('Failed to record vote. Please try again.');

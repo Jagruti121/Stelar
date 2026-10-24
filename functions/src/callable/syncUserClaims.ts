@@ -47,13 +47,15 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
     const deptId = data.deptId || data.department || '';
     const department = data.department || data.deptId || '';
     const division = data.division || '';
+    const year = data.year || '';
 
     await auth.setCustomUserClaims(uid, {
       roles,
       studentId,
       deptId,
       department,
-      division
+      division,
+      year
     });
 
     return {
@@ -63,7 +65,8 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
       studentId,
       deptId,
       department,
-      division
+      division,
+      year
     };
   }
 
@@ -76,13 +79,15 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
     const deptId = data.deptId || data.department || '';
     const department = data.department || data.deptId || '';
     const division = data.division || '';
+    const year = data.year || '';
 
     await auth.setCustomUserClaims(uid, {
       roles,
       studentId,
       deptId,
       department,
-      division
+      division,
+      year
     });
 
     return {
@@ -92,7 +97,8 @@ export const syncUserClaims = onCall({ region: 'us-central1' }, async (request) 
       studentId,
       deptId,
       department,
-      division
+      division,
+      year
     };
   }
 

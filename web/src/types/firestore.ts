@@ -512,5 +512,7 @@ export interface StellarClaims {
   roles: UserRole[];
   studentId?: string;   // set for STUDENT role
   deptId?: string;
+  department?: string;
   division?: string;
+  year?: string;
 }

@@ -184,7 +184,9 @@ export default function ActivatePage(): React.ReactElement {
           roles: ['STUDENT'],
           studentId: verifiedStudent.id,
           deptId: verifiedStudent.department.toLowerCase(),
+          department: verifiedStudent.department,
           division: verifiedStudent.division,
+          year: verifiedStudent.year,
           name: verifiedStudent.name
         }));
       } catch {

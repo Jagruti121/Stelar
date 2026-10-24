@@ -68,7 +68,9 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
           let roles: UserRole[] = (rawClaims['roles'] as UserRole[]) ?? [];
           let studentId = rawClaims['studentId'] as string | undefined;
           let deptId = rawClaims['deptId'] as string | undefined;
+          let department = (rawClaims['department'] as string | undefined) || deptId;
           let division = rawClaims['division'] as string | undefined;
+          let year = rawClaims['year'] as string | undefined;
 
           // If custom claims are empty in token, sync them via Cloud Function
           if (roles.length === 0) {
@@ -81,8 +83,10 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
               if (syncData?.roles) {
                 roles = syncData.roles;
                 deptId = syncData.deptId || deptId;
+                department = syncData.department || syncData.deptId || department;
                 studentId = syncData.studentId || studentId;
                 division = syncData.division || division;
+                year = syncData.year || year;
                 // Force-refresh token to get newly minted claims into current session
                 await firebaseUser.getIdToken(true);
               }
@@ -92,7 +96,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
             if (roles.length === 0) {
               try {
-                const { doc, getDoc } = await import('firebase/firestore');
+                const { doc, getDoc, collection, query, where, getDocs, limit } = await import('firebase/firestore');
                 const { db } = await import('@/lib/firebase');
 
                 // Check staff collection
@@ -100,15 +104,23 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
                 if (staffSnap.exists()) {
                   const data = staffSnap.data();
                   roles = (data.roles as UserRole[]) || ['FACULTY'];
-                  deptId = data.deptId;
+                  deptId = data.deptId || data.department;
+                  department = data.department || data.deptId;
                 } else {
                   // Check students collection
-                  const studentSnap = await getDoc(doc(db, 'students', firebaseUser.uid));
-                  if (studentSnap.exists()) {
+                  let studentSnap: any = await getDoc(doc(db, 'students', firebaseUser.uid));
+                  if (!studentSnap.exists()) {
+                    const qSnap = await getDocs(query(collection(db, 'students'), where('authUid', '==', firebaseUser.uid), limit(1)));
+                    if (!qSnap.empty) studentSnap = qSnap.docs[0];
+                  }
+                  if (studentSnap && studentSnap.exists()) {
                     const data = studentSnap.data();
                     roles = ['STUDENT'];
-                    studentId = data.id || firebaseUser.uid;
-                    deptId = data.deptId;
+                    studentId = data.id || studentSnap.id || firebaseUser.uid;
+                    deptId = data.deptId || data.department;
+                    department = data.department || data.deptId;
+                    division = data.division || division;
+                    year = data.year || year;
                   }
                 }
               } catch (fsErr) {
@@ -125,6 +137,9 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
                   if (parsed.roles && parsed.roles.length > 0) {
                     roles = parsed.roles;
                     deptId = parsed.deptId || deptId;
+                    department = parsed.department || parsed.deptId || department;
+                    division = parsed.division || division;
+                    year = parsed.year || year;
                   }
                 } catch {}
               }
@@ -145,7 +160,9 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
             roles,
             studentId,
             deptId,
+            department,
             division,
+            year,
           };
           setUser(firebaseUser);
           setClaims(resolvedClaims);

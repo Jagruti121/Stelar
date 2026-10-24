@@ -59,8 +59,10 @@ export const activateStudent = onCall({ region: 'us-central1' }, async (request)
     await auth.setCustomUserClaims(userRecord.uid, {
       roles: ['STUDENT'],
       studentId: studentId,
-      deptId: studentData?.deptId,
+      deptId: studentData?.deptId || studentData?.department,
+      department: studentData?.department || studentData?.deptId,
       division: studentData?.division,
+      year: studentData?.year || 'First',
     });
 
     const batch = db.batch();
