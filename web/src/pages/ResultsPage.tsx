@@ -17,6 +17,7 @@ export default function ResultsPage(): React.ReactElement {
   // FIX 2: Track selected semester independently — never force-override it
   const [semester, setSemester] = useState<number>(1);
   const [availableSemesters, setAvailableSemesters] = useState<number[]>([]);
+  const [resultsMap, setResultsMap] = useState<Record<number, Result>>({});
   const [result, setResult] = useState<Result | null>(null);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
@@ -30,6 +31,7 @@ export default function ResultsPage(): React.ReactElement {
       let resolvedRoll = (claims as any)?.rollNo || '';
       let resolvedName = (claims as any)?.name || user?.displayName || '';
       let resolvedDept = claims?.deptId || 'Computer Science';
+      let resolvedSem = 1;
 
       if (user?.uid) {
         // Try fetching student record by authUid
@@ -41,6 +43,7 @@ export default function ResultsPage(): React.ReactElement {
             resolvedRoll = data.rollNo || resolvedRoll;
             resolvedName = data.name || resolvedName;
             resolvedDept = data.department || data.deptId || resolvedDept;
+            resolvedSem = Number(data.semester || data.sem) || resolvedSem;
             if (isMounted) {
               setStudentInfo({
                 name: resolvedName,
@@ -56,6 +59,7 @@ export default function ResultsPage(): React.ReactElement {
               resolvedRoll = data.rollNo || resolvedRoll;
               resolvedName = data.name || resolvedName;
               resolvedDept = data.department || data.deptId || resolvedDept;
+              resolvedSem = Number(data.semester || data.sem) || resolvedSem;
               if (isMounted) {
                 setStudentInfo({
                   name: resolvedName,
@@ -82,6 +86,9 @@ export default function ResultsPage(): React.ReactElement {
       }
 
       if (isMounted) {
+        if (resolvedSem > 1) {
+          setSemester(resolvedSem);
+        }
         setRollInput(resolvedRoll || 'CS1001');
         setActiveRoll(resolvedRoll || 'CS1001');
         setLoading(false);
@@ -95,63 +102,50 @@ export default function ResultsPage(): React.ReactElement {
     };
   }, [user?.uid, claims, isFaculty]);
 
-  // 2. Fetch available semesters whenever activeRoll changes.
-  //    Also fetch the result for the currently selected semester.
-  //    FIX 2: Never auto-redirect to a different semester.
-  //    FIX 1: When activeRoll changes (new lookup), also resolve student name/info.
+  // 2. Fetch all academic results for activeRoll in one parallel operation
   useEffect(() => {
     if (!activeRoll) return;
 
     let isMounted = true;
     setSearching(true);
-    // FIX 1: Clear previous student info when performing a new roll lookup
     setStudentInfo(null);
 
     async function loadResults() {
       const rollClean = activeRoll.trim();
-      const candidatesSet = new Set<string>([
-        rollClean,
-        rollClean.toLowerCase(),
-        rollClean.toUpperCase(),
-        `student_${rollClean.toUpperCase()}`,
-        `student_${rollClean.toLowerCase()}`
-      ]);
-      if (claims?.studentId) {
-        candidatesSet.add(claims.studentId);
-        candidatesSet.add(claims.studentId.toLowerCase());
-        candidatesSet.add(claims.studentId.toUpperCase());
-        const stripped = claims.studentId.replace(/^student_/i, '');
-        candidatesSet.add(stripped);
-        candidatesSet.add(stripped.toLowerCase());
-      }
-      const depts = [(claims?.deptId || 'cs'), 'cs', 'cse', 'it', 'ds'].map(d => d.toLowerCase());
-      for (const d of depts) {
-        for (let s = 1; s <= 8; s++) {
-          candidatesSet.add(`${d}_sem${s}_diva_${rollClean.toLowerCase()}`);
-          candidatesSet.add(`${d}_sem${s}_divb_${rollClean.toLowerCase()}`);
-        }
-      }
-      const candidates = Array.from(candidatesSet);
+      const rollUpper = rollClean.toUpperCase();
+      const rollLower = rollClean.toLowerCase();
 
-      // FIX 1: Resolve the student name for the new activeRoll from Firestore
       try {
-        // Try querying by rollNo field
-        const q = query(collection(db, 'students'), where('rollNo', '==', rollClean));
-        const snap = await getDocs(q);
-        if (!snap.empty && isMounted) {
-          const data = snap.docs[0].data();
-          setStudentInfo({
-            name: data.name || undefined,
-            rollNo: data.rollNo || rollClean,
-            department: data.department ? normalizeDepartment(data.department) : (data.deptId ? normalizeDepartment(data.deptId) : undefined),
-            year: data.year ? `${data.year} Year` : undefined,
-          });
-        } else {
-          // Try document ID lookup (student_<rollNo>)
-          for (const cand of candidates) {
-            try {
-              const sSnap = await getDoc(doc(db, 'students', cand));
-              if (sSnap.exists() && isMounted) {
+        // Resolve student name / info if not already resolved
+        try {
+          const qRoll = query(collection(db, 'students'), where('rollNo', '==', rollClean));
+          const qUpper = query(collection(db, 'students'), where('rollNo', '==', rollUpper));
+          const [sSnap1, sSnap2] = await Promise.all([
+            getDocs(qRoll).catch(() => null),
+            getDocs(qUpper).catch(() => null)
+          ]);
+          const docSnap = (sSnap1 && !sSnap1.empty) ? sSnap1.docs[0] : (sSnap2 && !sSnap2.empty ? sSnap2.docs[0] : null);
+
+          if (docSnap && isMounted) {
+            const data = docSnap.data();
+            setStudentInfo({
+              name: data.name || undefined,
+              rollNo: data.rollNo || rollClean,
+              department: data.department ? normalizeDepartment(data.department) : (data.deptId ? normalizeDepartment(data.deptId) : undefined),
+              year: data.year ? `${data.year} Year` : undefined,
+            });
+          } else {
+            const studentDocCandidates = [
+              `student_${rollUpper}`,
+              `student_${rollLower}`,
+              rollUpper,
+              rollLower
+            ];
+            if (claims?.studentId) studentDocCandidates.unshift(claims.studentId);
+
+            for (const sId of studentDocCandidates) {
+              const sSnap = await getDoc(doc(db, 'students', sId)).catch(() => null);
+              if (sSnap && sSnap.exists() && isMounted) {
                 const data = sSnap.data();
                 setStudentInfo({
                   name: data.name || undefined,
@@ -161,42 +155,120 @@ export default function ResultsPage(): React.ReactElement {
                 });
                 break;
               }
-            } catch {
-              // ignore individual doc misses
             }
           }
+        } catch (e) {
+          console.warn('Student profile lookup failed:', e);
         }
-      } catch (e) {
-        console.warn('Roll lookup for student name failed:', e);
-      }
 
-      // Check all available semesters
-      const foundSemesters = new Set<number>();
-      let matchedResult: Result | null = null;
+        // Parallel fetch for all results belonging to this student
+        const bySemester: Record<number, Result> = {};
 
-      for (let s = 1; s <= 8; s++) {
-        for (const cand of candidates) {
-          try {
-            const rSnap = await getDoc(doc(db, 'results', `${cand}_${s}`));
-            if (rSnap.exists()) {
-              foundSemesters.add(s);
-              if (s === semester) {
-                matchedResult = rSnap.data() as Result;
-              }
-            }
-          } catch (err) {
-            console.warn(`Error reading result ${cand}_${s}:`, err);
+        const addResult = (data: any, docId: string) => {
+          if (!data || !data.subjectMarks || !Array.isArray(data.subjectMarks)) return;
+          const s = Number(data.semester);
+          if (!s || s < 1 || s > 8) return;
+          bySemester[s] = {
+            id: docId,
+            studentId: data.studentId || docId,
+            semester: s,
+            sgpa: typeof data.sgpa === 'number' ? data.sgpa : (Number(data.sgpa) || 0),
+            subjectMarks: data.subjectMarks,
+            uploadedBy: data.uploadedBy || '',
+            uploadedAt: data.uploadedAt || null,
+          } as Result;
+        };
+
+        const resultsRef = collection(db, 'results');
+
+        // Build list of specific doc IDs across all semesters
+        const directDocIds: string[] = [];
+        const baseIds = [
+          rollUpper,
+          rollLower,
+          `student_${rollUpper}`,
+          `student_${rollLower}`,
+        ];
+        if (claims?.studentId) baseIds.push(claims.studentId);
+
+        const depts = [(claims?.deptId || 'cs'), 'cs', 'cse', 'it', 'ds'].map(d => d.toLowerCase());
+        for (let s = 1; s <= 8; s++) {
+          for (const b of baseIds) {
+            directDocIds.push(`${b}_${s}`);
+          }
+          for (const d of depts) {
+            directDocIds.push(`${d}_sem${s}_diva_${rollLower}_${s}`);
+            directDocIds.push(`${d}_sem${s}_divb_${rollLower}_${s}`);
+            directDocIds.push(`${d}_sem${s}_diva_${rollLower}`);
+            directDocIds.push(`${d}_sem${s}_divb_${rollLower}`);
           }
         }
-      }
 
-      if (isMounted) {
-        const sortedSems = Array.from(foundSemesters).sort((a, b) => a - b);
-        setAvailableSemesters(sortedSems);
+        // Execute all queries and direct doc lookups simultaneously
+        const [
+          qRollSnap,
+          qUpperSnap,
+          qSidSnap,
+          allDocsSnap,
+          ...directSnaps
+        ] = await Promise.all([
+          getDocs(query(resultsRef, where('rollNo', '==', rollClean))).catch(() => null),
+          getDocs(query(resultsRef, where('rollNo', '==', rollUpper))).catch(() => null),
+          getDocs(query(resultsRef, where('studentId', '==', `student_${rollUpper}`))).catch(() => null),
+          getDocs(resultsRef).catch(() => null),
+          ...directDocIds.map(id => getDoc(doc(db, 'results', id)).catch(() => null))
+        ]);
 
-        // FIX 2: Do NOT auto-switch semester. Just set result (null if unpublished).
-        setResult(matchedResult);
-        setSearching(false);
+        // 1. Process query results
+        [qRollSnap, qUpperSnap, qSidSnap].forEach(snap => {
+          if (snap && !snap.empty) {
+            snap.docs.forEach(d => addResult(d.data(), d.id));
+          }
+        });
+
+        // 2. Process direct doc lookups
+        directSnaps.forEach(snap => {
+          if (snap && snap.exists && snap.exists()) {
+            addResult(snap.data(), snap.id);
+          }
+        });
+
+        // 3. Process entire collection snapshot as fallback matching
+        if (allDocsSnap && !allDocsSnap.empty) {
+          allDocsSnap.docs.forEach(d => {
+            const data = d.data();
+            const dRoll = String(data.rollNo || '').trim().toUpperCase();
+            const dSid = String(data.studentId || '').trim().toUpperCase();
+            const idUpper = d.id.toUpperCase();
+
+            const isMatch =
+              dRoll === rollUpper ||
+              dSid === rollUpper ||
+              dSid === `STUDENT_${rollUpper}` ||
+              idUpper.startsWith(`${rollUpper}_`) ||
+              idUpper.startsWith(`STUDENT_${rollUpper}_`) ||
+              idUpper.includes(`_${rollUpper}_`) ||
+              idUpper.includes(`_${rollLower}_`);
+
+            if (isMatch) {
+              addResult(data, d.id);
+            }
+          });
+        }
+
+        if (isMounted) {
+          setResultsMap(bySemester);
+          const published = Object.keys(bySemester).map(Number).sort((a, b) => a - b);
+          setAvailableSemesters(published);
+          setResult(bySemester[semester] || null);
+        }
+      } catch (err) {
+        console.error('Error loading results:', err);
+      } finally {
+        if (isMounted) {
+          setSearching(false);
+          setLoading(false);
+        }
       }
     }
 
@@ -205,65 +277,12 @@ export default function ResultsPage(): React.ReactElement {
     return () => {
       isMounted = false;
     };
-  }, [activeRoll]); // intentionally NOT including `semester` — semester change is handled separately
+  }, [activeRoll]);
 
-  // 3. When ONLY the semester changes (user picks from dropdown or pills),
-  //    fetch just the result for that semester without re-resolving the student.
+  // 3. Instant local semester switch
   useEffect(() => {
-    if (!activeRoll || searching) return;
-
-    let isMounted = true;
-
-    async function fetchForSemester() {
-      const rollClean = activeRoll.trim();
-      const candidatesSet = new Set<string>([
-        rollClean,
-        rollClean.toLowerCase(),
-        rollClean.toUpperCase(),
-        `student_${rollClean.toUpperCase()}`,
-        `student_${rollClean.toLowerCase()}`
-      ]);
-      if (claims?.studentId) {
-        candidatesSet.add(claims.studentId);
-        candidatesSet.add(claims.studentId.toLowerCase());
-        candidatesSet.add(claims.studentId.toUpperCase());
-        const stripped = claims.studentId.replace(/^student_/i, '');
-        candidatesSet.add(stripped);
-        candidatesSet.add(stripped.toLowerCase());
-      }
-      const depts = [(claims?.deptId || 'cs'), 'cs', 'cse', 'it', 'ds'].map(d => d.toLowerCase());
-      for (const d of depts) {
-        candidatesSet.add(`${d}_sem${semester}_diva_${rollClean.toLowerCase()}`);
-        candidatesSet.add(`${d}_sem${semester}_divb_${rollClean.toLowerCase()}`);
-      }
-      const candidates = Array.from(candidatesSet);
-
-      let matchedResult: Result | null = null;
-      for (const cand of candidates) {
-        try {
-          const rSnap = await getDoc(doc(db, 'results', `${cand}_${semester}`));
-          if (rSnap.exists()) {
-            matchedResult = rSnap.data() as Result;
-            break;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      if (isMounted) {
-        // FIX 2: Just update result — null means "No result published yet"
-        setResult(matchedResult);
-      }
-    }
-
-    fetchForSemester();
-
-    return () => {
-      isMounted = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [semester]);
+    setResult(resultsMap[semester] || null);
+  }, [semester, resultsMap]);
 
   const handleSearchRoll = (e: React.FormEvent) => {
     e.preventDefault();

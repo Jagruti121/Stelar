@@ -73,7 +73,14 @@ service cloud.firestore {
 
       // inbox sub-collection: student reads their own; function writes
       match /inbox/{notificationId} {
-        allow read: if isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data);
+        allow read: if isAuthed() && (
+          // Primary: match via authUid stored on the student doc
+          isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data)
+          // Fallback: studentId path segment matches the studentId claim
+          || request.auth.token.get('studentId', '') == studentId
+          // Fallback: studentId path segment matches the user's uid
+          || request.auth.uid == studentId
+        );
         allow write: if false; // written by fanOut Cloud Function trigger
       }
     }
@@ -155,14 +162,24 @@ service cloud.firestore {
     // ── attendanceSummary ────────────────────────────────────
     match /attendanceSummary/{studentId} {
       allow read: if isFaculty()
-        || isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data);
-      allow write: if false; // maintained by Firestore trigger only
+        || isStudentOwner(get(/databases/$(database)/documents/students/$(studentId)).data)
+        || (isAuthed() && (
+          request.auth.token.get('studentId', '') == studentId
+          || request.auth.uid == studentId
+        ));
+      // Students can initialize/update their own summary doc (e.g. during activation);
+      // the Firestore trigger keeps it up-to-date afterwards.
+      allow write: if isFaculty()
+        || (isAuthed() && (
+          request.auth.token.get('studentId', '') == studentId
+          || request.auth.uid == studentId
+        ));
     }
 
     // ── results ──────────────────────────────────────────────
+    // Any authenticated user can read results (students see their own via app logic).
     match /results/{resultId} {
-      allow read: if isFaculty()
-        || isAuthed();
+      allow read: if isAuthed();
       allow write: if false; // uploaded by HOD via Function
     }
 
